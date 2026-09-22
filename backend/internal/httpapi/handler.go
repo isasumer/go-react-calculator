@@ -80,6 +80,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/api/v1/calculate", h.methodNotAllowed(http.MethodPost))
 	mux.HandleFunc("GET /api/v1/operations", h.operations)
 	mux.HandleFunc("/api/v1/operations", h.methodNotAllowed(http.MethodGet, http.MethodHead))
+	mux.HandleFunc("GET /api/v1/openapi.yaml", h.openapiSpec)
+	mux.HandleFunc("/api/v1/openapi.yaml", h.methodNotAllowed(http.MethodGet, http.MethodHead))
 	// Operational endpoints, outside the versioned API: they are for the
 	// platform (probes, deploy tooling), not for API clients.
 	mux.HandleFunc("GET /healthz", h.healthz)
