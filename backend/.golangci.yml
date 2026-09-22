@@ -1,0 +1,65 @@
+# golangci-lint v2 configuration (version pinned in tools/go.mod).
+# Note: in v2 `gosimple` is merged into `staticcheck` and `gofumpt` is a formatter, not a linter.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - exhaustive
+    - gocritic
+    - gosec
+    - govet
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - staticcheck # includes the former gosimple and stylecheck checks
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # readability over struct packing
+    misspell:
+      locale: US
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: receiver-naming
+  exclusions:
+    generated: strict
+    presets:
+      - std-error-handling
+    rules:
+      # Tests may ignore errors on cleanup, use unchecked assertions and hit local servers.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - noctx
+          - bodyclose
+
+formatters:
+  enable:
+    - gofumpt
