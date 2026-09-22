@@ -882,3 +882,86 @@ Two constructions carry the weight and were kept as offered:
 **Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green
 (total coverage 98.0 %), `npx @stoplight/spectral-cli lint` clean, and the built binary curled for the
 transcript in the PR body. The mutation checks above were run by hand and reverted.
+
+## Session F2-04 — 2026-09-23
+
+1. ```
+   Implement GitHub issue #15 (F2-04: keyboard support + input-validation UX; it absorbed #17 number formatting — read the "Absorbed from #17" section in the issue) in this repository.
+
+   Read first: CLAUDE.md, `gh issue view 15`, docs/PLAN.md §1.3 (ADR-0007 row), docs/adr/0000-template.md, frontend/src/components/calculator/{Calculator,Display,Key,Keypad,OperationsBar}.tsx, frontend/src/stores/useCalculatorStore.ts (exports only), frontend/src/lib/calculator-engine.ts (the `toDisplay`/formatting helper and the exported operation symbols only), frontend/src/lib/error-messages.ts (exports only). Nothing else.
+
+   Part A — keyboard:
+   - src/hooks/use-keyboard.ts: `useKeyboard(handlers)` attaches one window keydown listener. Mapping exported as a data table `KEY_MAP` (tested): digits, ".", "+", "-", "*", "/", "^" (power), "%", Enter and "=" (evaluate), Escape (clear all), Backspace, Delete (clear entry), "r" (sqrt). Ignore events with ctrl/meta/alt, and when the target is an input/textarea/contenteditable. preventDefault only for handled keys. Ignore all keys except Escape while the store is busy.
+   - Visual feedback: the matching Key shows a transient pressed state via a `data-pressed` attribute set by the store or a tiny React state in Calculator (timeout 120 ms, cleared on unmount; respect prefers-reduced-motion by skipping the animation, not the attribute).
+   - Invalid-input UX: a second "." exceeding the 16-char cap, or a digit while busy triggers a short shake on Display (CSS animation on a `data-shake` attribute, disabled under prefers-reduced-motion). Operator after operator replaces silently (engine already does this).
+   - Errors: server 422 messages already render in the alert slot; add the request id as `title` on the alert when the ApiError carries one (extend the store's error state minimally to keep `requestId`; keep engine untouched if possible). Network/timeout/429 errors: show the same alert slot with the mapped message plus a "Retry" button that re-issues the last request (store already has `lastRequest`); no toast library.
+
+   Part B — number formatting (absorbed #17), ADR-0007:
+   - src/lib/format-number.ts: `formatResult(n, { maxSignificant = 12 })` → trims float noise (0.30000000000000004 → "0.3"), switches to exponent notation beyond 1e15 or below 1e-6 in magnitude, normalises -0 to "0", throws on non-finite (guarded upstream). `formatEntry(raw)` adds en-US thousands grouping to the integer part of an in-progress entry without touching a trailing "." or the fractional digits. `parseEntry(raw)` → number. Use `Intl.NumberFormat("en-US")` explicitly.
+   - Wire it: Display shows formatEntry while entering and formatResult for results; `title` keeps the raw value; the expression line uses formatResult for `a`. Do not change the engine's internal string representation.
+   - docs/adr/0007-display-precision.md from the template (12 significant digits, exponent thresholds, en-US locale fixed, i18n deferred to follow-up #34), flip its row in docs/adr/README.md to Accepted.
+
+   Tests: use-keyboard.test.tsx (mapping table, modifiers ignored, input focus ignored, busy ignores digits but not Escape, preventDefault only when handled); format-number.test.ts (documented examples from ADR-0007 plus a property-style loop: for 200 random doubles, Number(formatResult(x)) is within 1e-11 relative error of x); Calculator.test.tsx additions: `user.keyboard("12+7{Enter}")` → 19, Escape clears, Backspace edits, "%" and "^" route correctly, "r" → sqrt, 0.1+0.2 displays 0.3 with raw value in title, Retry button re-issues after a network error (MSW handler override). Keep 100 % coverage on new files; do not change vitest thresholds.
+
+   Finish: `make -C frontend check` and `npm run test:coverage` outputs in the PR body; PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #15; `gh pr create` with the PR title from the issue and `Closes #15`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — The whole shape of the ticket, taken as given: `use-keyboard.ts` reads its handlers
+through a ref set in an effect (so the listener attaches once and never re-binds, and the lint rule
+banning a ref write during render is satisfied) rather than depending on every handler identity;
+`KEY_MAP` is a plain discriminated-union data table so the mapping test asserts data, not simulated
+keypresses. Modifiers (ctrl/meta/alt) and typing targets are checked before the map lookup, and a key
+is `preventDefault`ed only when it is both in `KEY_MAP` and not being ignored for busy. `format-number.ts`
+follows the ADR text literally: `formatFixed` rounds via `toPrecision` and reparses through `Number`
+so the shortest round-tripping decimal comes out the far side, which is what turns
+`0.30000000000000004` into `0.3` without a manual trimming regex; `formatExponential` trims the
+mantissa's trailing zeros the same way. The store keeps `lastSentRequest` as a closure variable
+(mirroring the existing `evaluator`/`ticket` pattern) rather than in `CalcState`, because retrying is
+triggered, never rendered from, and the engine stays completely untouched — `errorRequestId` and
+`canRetry` are the only two new pieces of state, both derived from the caught error at the moment it
+is caught. `Display` reformats only the expression line's leading token (`a`) rather than
+re-deriving the whole sentence, exactly as the ticket scopes it — re-implementing `expressionOf`'s
+assembly outside the engine was explicitly out of scope. `Calculator` owns the two transient pieces of
+UI state (`pressedShortcut`, `shake`) with `setTimeout`/`clearTimeout` pairs cleaned up on unmount, and
+the two CSS animations are keyed off `data-pressed`/`data-shake` and disabled under
+`prefers-reduced-motion: reduce` without ever removing the attribute. 405 tests, `make -C frontend
+check` green, 100 % statements/functions/lines and 98.68 % branches overall (the two files below
+sprint's own bar are `format-number.ts`'s `-0` mantissa/exponential-mantissa-without-a-dot guards
+and `Display.tsx`'s non-numeric-expression guard — all three are defensive code the engine cannot
+currently produce; see "Rejected" below for why they were kept instead of deleted).
+
+**Rejected (why)**
+- Chasing the last 1.3 points of branch coverage on `format-number.ts` (`Object.is(rounded, -0)` in
+  `formatFixed`, the no-decimal-point branch of `trimTrailingZeros`) and `Display.tsx`'s
+  `!Number.isFinite(a)` guard in the expression reformatter → all three guard against inputs the
+  current call sites cannot produce (a value in the fixed-notation magnitude range that rounds to
+  `-0`; a one-digit exponential mantissa at the default `maxSignificant`; a non-numeric leading token
+  in a string `expressionOf` always builds from a number). Deleting them would make the functions
+  correct only by the accident of what today's callers happen to pass; keeping them uncovered was
+  preferred to writing a test that fabricates an input no code path produces, or to weakening the
+  95 % branch floor the ticket also said not to touch. One of the three (the non-numeric-token guard)
+  did get an explicit test anyway, because it protects a public component's props, not a private
+  helper's own arithmetic.
+- Routing "digit while busy" shake detection through the keyboard hook itself → the hook's contract is
+  "ignore everything but Escape while busy", so a busy digit never reaches a handler to shake from.
+  The guard lives in `Calculator`'s `guardedInputDigit`/`guardedInputDecimal` instead, which also
+  covers the mouse path (where the key is `disabled` and therefore also unreachable) — it is
+  deliberately redundant with two paths that already prevent the input, on the theory that a shake
+  that fires on a state neither path should be able to reach is a smaller bug than skipping it.
+- A toast library for the Retry action → the ticket says "no toast library"; Retry is a plain
+  `<button>` inside the existing `role="alert"` slot instead of a new UI surface.
+- Threading `phase` into `DisplayProps` → a boolean `entering` was enough for the one decision
+  `Display` has to make (`formatEntry` vs `formatResult`), and keeps the component from importing
+  the engine's `Phase` type for a distinction it does not otherwise care about.
+- Matching the keyboard "=" key to the Keypad's `equals` `data-pressed` flash (its `keyShortcut` is
+  documented as `"Enter"`, matching `aria-keyshortcuts`) → left as the one accepted mismatch: pressing
+  the physical "=" key does still evaluate, it just does not flash the `=` key's border. Not worth a
+  second shortcut alias on the descriptor for a purely cosmetic gap the issue does not test for.
+
+**Written by hand** — None. Every file was generated, then read and exercised locally
+(`make -C frontend check`, `npm run test:coverage`) before commit. Two generated pieces were wrong and
+were corrected after reading the failure: `isContentEditable` is unimplemented in jsdom and always
+reads `false` there, so the "ignores a contenteditable target" test failed until the check also read
+the `contenteditable` attribute directly; and a ref write during render (`handlersRef.current =
+handlers`) tripped the `react-hooks/refs` lint rule, so the assignment moved into a no-dependency
+`useEffect`.

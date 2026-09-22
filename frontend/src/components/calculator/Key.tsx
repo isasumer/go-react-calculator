@@ -45,6 +45,9 @@ export interface KeyProps {
   readonly disabled?: boolean | undefined;
   readonly title?: string | undefined;
   readonly className?: string | undefined;
+  /** True for ~120 ms after the matching keyboard shortcut fires (F2-04, #15); drives a CSS
+   *  animation off `data-pressed`, skipped rather than removed under `prefers-reduced-motion`. */
+  readonly pressed?: boolean | undefined;
 }
 
 export function Key({
@@ -56,6 +59,7 @@ export function Key({
   disabled = false,
   title,
   className,
+  pressed = false,
 }: KeyProps) {
   return (
     <Button
@@ -63,6 +67,7 @@ export function Key({
       variant="ghost"
       data-ui="calculator.key"
       data-key-variant={variant}
+      data-pressed={pressed ? "true" : undefined}
       aria-label={ariaLabel}
       aria-keyshortcuts={keyShortcut}
       title={title}

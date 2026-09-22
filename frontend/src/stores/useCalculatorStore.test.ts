@@ -4,8 +4,10 @@ import { ApiError } from "@/lib/api";
 import { initialState } from "@/lib/calculator-engine";
 import { FALLBACK_ERROR_MESSAGE } from "@/lib/error-messages";
 import {
+  selectCanRetry,
   selectDisplay,
   selectError,
+  selectErrorRequestId,
   selectExpression,
   selectIsBusy,
   selectPhase,
@@ -300,6 +302,107 @@ describe("useCalculatorStore", () => {
 
       expect(selectExpression(store())).toBe("12 +");
       expect(selectDisplay(store())).toBe("7");
+    });
+  });
+
+  describe("retry (F2-04, #15)", () => {
+    const timeout = new ApiError({ status: 0, code: "TIMEOUT", title: "Timed out", detail: "" });
+
+    it("carries the request id and marks a transport error retryable", async () => {
+      const withRequestId = new ApiError({
+        status: 429,
+        code: "RATE_LIMITED",
+        title: "Too many requests",
+        detail: "",
+        requestId: "req-1",
+      });
+      store().setEvaluator(() => Promise.reject(withRequestId));
+
+      store().inputDigit("3");
+      store().setOperator("add");
+      store().inputDigit("4");
+      store().evaluate();
+
+      await vi.waitFor(() => {
+        expect(selectPhase(store())).toBe("error");
+      });
+      expect(selectErrorRequestId(store())).toBe("req-1");
+      expect(selectCanRetry(store())).toBe(true);
+    });
+
+    it("does not mark a semantic (422) error as retryable and carries no request id by default", async () => {
+      store().inputDigit("5");
+      store().setOperator("divide");
+      store().inputDigit("0");
+      store().evaluate();
+
+      await vi.waitFor(() => {
+        expect(selectPhase(store())).toBe("error");
+      });
+      expect(selectCanRetry(store())).toBe(false);
+      expect(selectErrorRequestId(store())).toBeNull();
+    });
+
+    it("re-sends the failed request and clears the error on success", async () => {
+      let attempt = 0;
+      store().setEvaluator((request) => {
+        attempt += 1;
+        return attempt === 1 ? Promise.reject(timeout) : Promise.resolve(answer(request, 7));
+      });
+
+      store().inputDigit("3");
+      store().setOperator("add");
+      store().inputDigit("4");
+      store().evaluate();
+
+      await vi.waitFor(() => {
+        expect(selectCanRetry(store())).toBe(true);
+      });
+
+      store().retry();
+
+      await vi.waitFor(() => {
+        expect(selectIsBusy(store())).toBe(false);
+      });
+      expect(attempt).toBe(2);
+      expect(selectDisplay(store())).toBe("7");
+      expect(selectError(store())).toBeNull();
+      expect(selectCanRetry(store())).toBe(false);
+    });
+
+    it("is a no-op with nothing to retry, while busy, or when the error is not retryable", async () => {
+      const evaluator = vi.fn(arithmetic);
+      store().setEvaluator(evaluator);
+
+      // Nothing has failed yet.
+      store().retry();
+      expect(evaluator).not.toHaveBeenCalled();
+
+      // A 422: retryable is false, so retry stays a no-op.
+      store().inputDigit("5");
+      store().setOperator("divide");
+      store().inputDigit("0");
+      store().evaluate();
+      await vi.waitFor(() => {
+        expect(selectPhase(store())).toBe("error");
+      });
+      const callsAfterFailure = evaluator.mock.calls.length;
+      store().retry();
+      expect(evaluator).toHaveBeenCalledTimes(callsAfterFailure);
+
+      // While a request is in flight, retry is also a no-op.
+      const pending = deferred<CalculateResponse>();
+      store().setEvaluator(() => pending.promise);
+      store().inputDigit("1");
+      store().setOperator("add");
+      store().inputDigit("1");
+      store().evaluate();
+      expect(selectIsBusy(store())).toBe(true);
+      store().retry();
+      pending.resolve({ operation: "add", a: 1, b: 1, result: 2 });
+      await vi.waitFor(() => {
+        expect(selectIsBusy(store())).toBe(false);
+      });
     });
   });
 });

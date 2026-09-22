@@ -8,18 +8,59 @@
  *
  * Numbers can be up to {@link MAX_ENTRY_DIGITS} digits long, so the entry shrinks instead of
  * wrapping or overflowing, and the untruncated value is always in `title`.
+ *
+ * Formatting (ADR-0007, absorbed #17): the raw string from `selectDisplay` is never shown as-is.
+ * While a value is still being typed it gets thousands grouping (`formatEntry`); once it is a
+ * finished operand or result it gets full display formatting (`formatResult`) — trimmed float
+ * noise, exponent notation past the thresholds. Either way `title` keeps the untouched raw value.
  */
+import { formatEntry, formatResult, parseEntry } from "@/lib/format-number";
 import { cn } from "@/lib/utils";
 
 export interface DisplayProps {
   /** The secondary line, from `selectExpression`. Empty renders as a blank reserved line. */
   readonly expression: string;
-  /** The main line, from `selectDisplay`. Raw for now — formatting is F2-06 (#17). */
+  /** The main line, from `selectDisplay`. Formatted for display; `title` keeps the raw value. */
   readonly value: string;
   /** The mapped sentence from `selectError`, or `null` when the last calculation was fine. */
   readonly error: string | null;
   /** True while a calculation is in flight (`selectIsBusy`). */
   readonly busy: boolean;
+  /** True while `value` is still being typed (`enteringA`/`enteringB`) — switches `value`'s
+   *  formatting from `formatResult` to `formatEntry`. */
+  readonly entering?: boolean | undefined;
+  /** The failing request's server request id (`selectErrorRequestId`), shown as the alert's
+   *  `title` for support. `null`/omitted when there is no error or it carried none. */
+  readonly errorRequestId?: string | null | undefined;
+  /** Whether the alert should offer a Retry button (`selectCanRetry`). */
+  readonly canRetry?: boolean | undefined;
+  /** Re-issues the request that failed. Rendered only when `canRetry` is also true. */
+  readonly onRetry?: (() => void) | undefined;
+  /** True for a brief moment after a rejected keystroke (a second ".", the digit cap, a digit
+   *  while busy); drives a CSS shake off `data-shake`, skipped under `prefers-reduced-motion`. */
+  readonly shake?: boolean | undefined;
+}
+
+/** `value` is always a plain numeric string (the engine's `String(value)`), so this never throws. */
+function formatMainValue(value: string, entering: boolean): string {
+  return entering ? formatEntry(value) : formatResult(parseEntry(value));
+}
+
+/**
+ * The expression line is a complete sentence built by `expressionOf` (`"12 + 7 ="`); only its
+ * leading operand, `a`, is reformatted here — re-deriving the whole sentence would mean duplicating
+ * the engine's assembly logic, which is not this ticket's job.
+ */
+function formatExpression(expression: string): string {
+  if (expression === "") {
+    return expression;
+  }
+  const [first, ...rest] = expression.split(" ");
+  const a = parseEntry(first ?? "");
+  if (!Number.isFinite(a)) {
+    return expression;
+  }
+  return [formatResult(a), ...rest].join(" ");
 }
 
 /**
@@ -41,17 +82,31 @@ export function entrySizeClass(value: string): string {
   return "text-4xl";
 }
 
-export function Display({ expression, value, error, busy }: DisplayProps) {
+export function Display({
+  expression,
+  value,
+  error,
+  busy,
+  entering = false,
+  errorRequestId = null,
+  canRetry = false,
+  onRetry,
+  shake = false,
+}: DisplayProps) {
+  const displayValue = formatMainValue(value, entering);
+  const displayExpression = formatExpression(expression);
+
   return (
     <div
       data-ui="calculator.display"
+      data-shake={shake ? "true" : undefined}
       className="rounded-xl border border-border bg-surface-raised px-4 py-3"
     >
       <p
         title={expression}
         className="min-h-5 truncate text-right font-mono text-sm text-text-muted tabular-nums"
       >
-        {expression}
+        {displayExpression}
       </p>
 
       <div className="flex items-baseline justify-end gap-2">
@@ -73,16 +128,29 @@ export function Display({ expression, value, error, busy }: DisplayProps) {
           title={value}
           className={cn(
             "block min-w-0 truncate text-right font-mono font-semibold tabular-nums",
-            entrySizeClass(value),
+            entrySizeClass(displayValue),
           )}
         >
-          {value}
+          {displayValue}
         </output>
       </div>
 
       {/* Always rendered: a live region has to exist before its text changes to be announced. */}
-      <p role="alert" className="min-h-5 text-right text-sm font-medium text-danger">
+      <p
+        role="alert"
+        title={errorRequestId ?? undefined}
+        className="min-h-5 text-right text-sm font-medium text-danger"
+      >
         {error ?? ""}
+        {canRetry && onRetry ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="ml-2 underline decoration-dotted underline-offset-2 hover:no-underline"
+          >
+            Retry
+          </button>
+        ) : null}
       </p>
     </div>
   );

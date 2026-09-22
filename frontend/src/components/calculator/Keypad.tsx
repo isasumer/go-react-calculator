@@ -29,6 +29,9 @@ export interface KeypadProps {
   readonly onClearAll: () => void;
   readonly onOperator: (operator: BinaryOperation) => void;
   readonly onEquals: () => void;
+  /** The `event.key` the keyboard last acted on, within its ~120 ms pressed window, or `null`
+   *  (F2-04, #15). Matched against each key's `keyShortcut` to flash the one that was actually hit. */
+  readonly pressedShortcut?: string | null | undefined;
 }
 
 interface KeyDescriptor {
@@ -149,6 +152,7 @@ function buildKeys(props: KeypadProps): readonly KeyDescriptor[] {
 }
 
 export function Keypad(props: KeypadProps) {
+  const { pressedShortcut = null } = props;
   return (
     <div
       data-ui="calculator.keypad"
@@ -164,6 +168,7 @@ export function Keypad(props: KeypadProps) {
           variant={key.variant}
           keyShortcut={key.keyShortcut}
           disabled={props.busy && key.ignoresBusy !== true}
+          pressed={key.keyShortcut !== undefined && key.keyShortcut === pressedShortcut}
           onPress={key.press}
         />
       ))}

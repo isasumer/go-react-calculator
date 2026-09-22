@@ -34,6 +34,7 @@ const KEY_LABELS: Readonly<Record<string, string>> = {
 const KEY_SHORTCUTS: Readonly<Record<string, string>> = {
   percent: "%",
   power: "^",
+  sqrt: "r",
 };
 
 function isUnaryKey(name: string): name is UnaryKey {
@@ -72,9 +73,17 @@ export interface OperationsBarProps {
   readonly onUnary: (op: UnaryKey) => void;
   /** `xʸ`: selects a pending operation, exactly like a keypad operator. */
   readonly onOperator: (operator: BinaryOperation) => void;
+  /** The `event.key` the keyboard last acted on, within its ~120 ms pressed window, or `null`
+   *  (F2-04, #15). */
+  readonly pressedShortcut?: string | null | undefined;
 }
 
-export function OperationsBar({ busy, onUnary, onOperator }: OperationsBarProps) {
+export function OperationsBar({
+  busy,
+  onUnary,
+  onOperator,
+  pressedShortcut = null,
+}: OperationsBarProps) {
   const { operations } = useOperations();
   const extras = operations.filter((operation) => !KEYPAD_OPERATIONS.has(operation.name));
 
@@ -97,6 +106,7 @@ export function OperationsBar({ busy, onUnary, onOperator }: OperationsBarProps)
             variant="action"
             keyShortcut={KEY_SHORTCUTS[name]}
             disabled={busy || unsupported}
+            pressed={KEY_SHORTCUTS[name] !== undefined && KEY_SHORTCUTS[name] === pressedShortcut}
             title={unsupported ? `${name} needs a newer version of this app` : undefined}
             onPress={press}
           />
