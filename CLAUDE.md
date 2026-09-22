@@ -16,6 +16,17 @@ You are working on one GitHub issue in a fresh session. Follow this file, then t
 3. Read only the directories the issue lists under **Files / areas**. Do not explore the whole repo.
 4. `git switch main && git pull && git switch -c <branch>`.
 
+## `make check` contract
+`make check` at the root delegates to `make -C backend check` and `make -C frontend check`. Each must run, in order: format check, lint, vet/type-check, unit tests with coverage, coverage threshold gate. A ticket that adds a tool adds it to the corresponding `check` target in the same PR. Until a sub-project exists, the root target fails fast naming the ticket that delivers it.
+
+## Forbidden in a session
+- Editing `docs/PLAN.md`, `docs/tickets.json` or any Accepted ADR to change scope or decisions. File a `follow-up` issue instead.
+- Touching files outside the issue's **Files / areas** list, except `docs/PROMPTS.md` and the README section the issue names.
+- Adding a third-party dependency not listed below without an ADR.
+- Lowering a coverage threshold, skipping or deleting a failing test, or marking a test as expected-failure to get green.
+- Merging, force-pushing, rewriting history on `main`, or deleting branches other than your own after merge.
+- Naming the company that set the assignment anywhere in the repository.
+
 ## Toolchain
 - Go: `~/.local/go/bin/go` (added to PATH in `~/.bashrc`); `go version` must be ≥ 1.27. Backend tools are installed via `make -C backend tools`.
 - Node 22 via nvm; frontend uses `npm ci`.
