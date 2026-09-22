@@ -83,7 +83,10 @@ Four layers, from the bottom up:
    test id. Anything that talks to the API is intercepted with MSW (`src/test/msw`); a request with
    no matching handler fails the test (`onUnhandledRequest: "error"` in `src/test/setup.ts`) rather
    than silently hitting the network or hanging.
-4. **End-to-end** — pending [#22](../../../issues/22); not part of this suite yet.
+4. **End-to-end** — Playwright against the composed stack, in [`e2e/`](../e2e) rather than in this
+   suite: a separate npm project, so nothing here depends on Docker. Run it with `make e2e` from the
+   repository root once the stack is up — see the root
+   [README § Run the tests](../README.md#3-run-the-tests).
 
 ### Running
 
