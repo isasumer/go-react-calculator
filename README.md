@@ -46,7 +46,7 @@ Security policy, supported versions, and how to report a vulnerability: [`SECURI
 
 ## Testing
 
-_Filled in B1-07 / F2-07 / D4-01._
+_Filled in B1-07 / F2-07 / D4-01._ End-to-end tests against the composed stack live in [`e2e/`](e2e/); run them with `make e2e`.
 
 ## Project structure
 

@@ -1200,3 +1200,71 @@ Prompt (verbatim, from the orchestrator):
 **Written by hand** — None; every line was generated and then read before being committed. Action SHAs
 were resolved by hand via `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` for each pinned action rather
 than trusted from memory.
+
+## Session H3-04 — 2026-09-23
+
+Implement GitHub issue #22 (H3-04: end-to-end tests with Playwright against the composed stack) in its slimmed form.
+
+Read first: CLAUDE.md, `gh issue view 22`, compose.yaml, compose.override.example.yaml, scripts/smoke.sh (how it waits for the stack), .github/workflows/stack.yml (reuse its build/cache/up/down steps and pinned SHAs), Makefile (root, the e2e target), frontend/src/components/calculator/{Calculator,Display,Keypad,HistoryPanel}.tsx (only to learn the roles/labels/names to query by). Nothing else.
+
+Deliverables:
+1. e2e/ as its own npm package: package.json (`@playwright/test` pinned, scripts `test`, `test:ui`, `report`), .nvmrc, playwright.config.ts: baseURL from `E2E_BASE_URL` (default http://localhost:8080), projects `chromium` (desktop) and `mobile-safari` (Playwright's "iPhone 13" device, WebKit) — if WebKit is not installed locally, keep the project and document `npx playwright install webkit`; `retries: 1` in CI, `trace: on-first-retry`, HTML reporter to e2e/playwright-report, `expect` timeout 5 s, fully parallel off (the backend rate limiter is shared). e2e/Makefile with `test` (used by the root `make e2e`) and `install`.
+2. Specs under e2e/tests, queried by role/label/name only (never CSS classes; `data-ui` only as a last resort):
+   - calculator.spec.ts: click flow 12 + 7 = → 19; keyboard flow `12*3{Enter}` → 36; chained `2 + 3 × 4 =` → 20 (immediate execution, documented); √ of 16 → 4 via the operations bar.
+   - errors.spec.ts: 5 ÷ 0 = shows the division-by-zero message in the alert, next digit clears it.
+   - history.spec.ts: after two calculations the history lists them newest first, survives `page.reload()`, recall puts the value in the display, two-step clear empties it.
+   - responsive.spec.ts (mobile project only): no horizontal overflow at 320×568 (`document.documentElement.scrollWidth <= clientWidth`), all keys ≥ 44 px tall.
+   - a11y.spec.ts: @axe-core/playwright on the initial screen and after an error, no violations of impact serious/critical.
+   Keep the whole suite under ~90 s locally.
+3. Rate limiting: run e2e against a compose override that raises RATE_LIMIT_RPS/BURST (add compose.e2e.yaml with only that env change and use `-f compose.yaml -f compose.e2e.yaml`); document why in a comment. Do not change backend defaults.
+4. CI: add an `e2e` job to .github/workflows/stack.yml after `smoke` (needs it; reuse built images via GHA cache, `docker compose -f compose.yaml -f compose.e2e.yaml up -d --wait`, `npm ci` in e2e/, `npx playwright install --with-deps chromium webkit`, run tests, upload playwright-report and traces as artifacts on failure, always compose down). Make `ci-ok (stack)` need `e2e` too. Pin actions to SHAs.
+5. Root README "Testing" heading: one line pointing to e2e/ and `make e2e`; no restructuring. Verify .gitignore already covers e2e artifacts.
+
+Verify locally: full suite green against the composed stack (paste the summary line into the PR body), then push and confirm the stack workflow's e2e job is green on the PR (paste the run URL).
+
+Finish: PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #22; `gh pr create` with the PR title from the issue and `Closes #22`. Do not merge. Report the PR URL.
+
+[Orchestrator mid-session correction, verbatim intent]: keep the `e2e` job in stack.yml but do NOT make `ci-ok (stack)` depend on it — leave it non-blocking so e2e flakiness cannot block unrelated docs/release PRs; `smoke` staying in `ci-ok`'s `needs` is what keeps the stack itself gated. If a spec is flaky after one fix attempt, drop it and note it in the PR body rather than iterating further.
+
+**Accepted**
+- All five spec files and the shared `e2e/tests/helpers.ts` page-object helpers, querying only by
+  role/accessible name (`getByRole("status")` for the `<output>` result line — its implicit ARIA
+  role —, `getByRole("alert")` for the error line, `getByRole("button", { name })` for every key).
+  No CSS-class selectors anywhere; `data-ui` was not needed at all, since every interactive element
+  already carries a role and an accessible name.
+- `playwright.config.ts`: `fullyParallel: false` / `workers: 1` (the backend's token-bucket rate
+  limiter is one bucket per client IP, shared by every worker hitting the same compose stack),
+  `chromium` project `testIgnore`s `responsive.spec.ts` and `mobile-safari` `testMatch`es only it,
+  so the 320×568/44 px assertions run exactly once, on the mobile profile they're about.
+- `compose.e2e.yaml` overlay bumping `RATE_LIMIT_RPS`/`RATE_LIMIT_BURST` only — `compose.yaml`'s
+  shipped defaults are untouched, matching the ticket's "do not change backend defaults."
+- CI `e2e` job reuses the `smoke` job's `docker/bake-action` GHA cache scopes
+  (`stack-backend`/`stack-frontend`) as `cache-from` only, so it doesn't rebuild from scratch; it
+  installs Node via `actions/setup-node` pinned to the same SHA already used elsewhere in the repo,
+  and uploads `playwright-report`/`test-results` via the repo's existing pinned
+  `actions/upload-artifact` SHA, only `if: failure()`.
+- Root README "Testing" line and `e2e/Makefile` matching the root `make e2e` target already present
+  from the Sprint-3 container ticket.
+- Orchestrator's mid-session correction: `e2e` job stays in the workflow (`needs: smoke`, runs
+  whenever `changes.outputs.run == 'true'`) but is deliberately left out of `ci-ok (stack)`'s
+  `needs` list, with a comment explaining why (`smoke` alone still gates the stack).
+
+**Rejected (why)**
+- `page.keyboard.type("12*3")` for the keyboard-flow spec → Chromium's `insertText` fast path for
+  `.type()` did not reliably fire the `keydown` events `useKeyboard` listens on (`*` was dropped,
+  producing `2 × 3 = 6` instead of `12 × 3 = 36` in a real run); switched to one `page.keyboard.press`
+  per character, which is what a real key press dispatches.
+- Scoping the "every key ≥ 44 px" check to `page.getByRole("button")` unscoped → that also matched
+  the small history recall/remove rows, which are not "keys" in the ticket's sense and are not
+  44 px by design; scoped to the `Keypad` and `More operations` `role="group"`s instead.
+- A dedicated `@slow` 429-toast spec (mentioned as optional in the original, unslimmed ticket text)
+  → out of scope for the slimmed deliverables list actually given to this session (only the five
+  named specs); filed as a `follow-up` issue instead of adding scope silently.
+- Iterating further on `mobile-safari`/`responsive.spec.ts` locally → WebKit's system dependencies
+  (GStreamer/Wayland/etc.) cannot be installed in this sandbox (no `sudo`); per the ticket's own
+  allowance, the project stays in the config and CI installs it with `--with-deps`, so it is
+  verified there instead of by spending more local time on it (see the PR body for the run link).
+
+**Written by hand** — None; every file was generated, then run against the real composed stack
+(`FRONTEND_PORT=18080 docker compose -f compose.yaml -f compose.e2e.yaml up --build --wait`) and
+corrected against actual Playwright output, including the two fixes above.
