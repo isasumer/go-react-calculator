@@ -105,3 +105,53 @@
     @apply min-h-dvh bg-surface text-text antialiased;
   }
 }
+
+/*
+ * Keyboard feedback (F2-04, #15). Both are driven by a data attribute rather than a class so the
+ * component only ever has to decide *whether* the moment is happening, never *how* it looks; both
+ * are disabled outright under `prefers-reduced-motion`, per the same rule `motion-safe:` already
+ * enforces above — the attribute itself is never skipped, only the animation it would have played.
+ */
+@keyframes key-press {
+  from {
+    transform: scale(0.92);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes display-shake {
+  10%,
+  90% {
+    transform: translateX(-1px);
+  }
+  20%,
+  80% {
+    transform: translateX(2px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-3px);
+  }
+  40%,
+  60% {
+    transform: translateX(3px);
+  }
+}
+
+[data-pressed="true"] {
+  animation: key-press 120ms ease-out;
+}
+
+[data-shake="true"] {
+  animation: display-shake 300ms ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-pressed="true"],
+  [data-shake="true"] {
+    animation: none;
+  }
+}
