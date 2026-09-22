@@ -1,33 +1,55 @@
-import { Button } from "@/components/ui/button";
+/**
+ * The app shell: a title, the build it is running, and the calculator.
+ *
+ * Providers are not here — `main.tsx` wraps this in `QueryProvider` and `ErrorBoundary`, so a test
+ * can render `<App />` with only the providers it cares about.
+ */
+import { Calculator } from "@/components/calculator/Calculator";
 
-/** App shell. The calculator feature replaces the placeholder content in Sprint 2 (F2-03). */
+/**
+ * The version badge, from `VITE_APP_VERSION` at build time. It is deliberately not the backend's
+ * `/version` endpoint: this says which frontend you are looking at, and it must not depend on the
+ * service being reachable. Unset (a dev server, a plain `vite build`) reads `dev`.
+ *
+ * It takes the env as an argument rather than reading `import.meta.env` inline so that it is a pure
+ * function with a test of its own, and it treats the value as `unknown` because the ambient env type
+ * types every unknown key as `any` — the same reason `config.ts` parses rather than trusts it.
+ */
+export function appVersion(env: Readonly<Record<string, unknown>>): string {
+  const raw = env["VITE_APP_VERSION"];
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return "dev";
+  }
+  return raw.trim();
+}
+
 export function App() {
+  const version = appVersion(import.meta.env);
+
   return (
-    <main data-ui="app-shell" className="grid min-h-dvh place-items-center p-6">
-      <section
-        aria-labelledby="app-title"
-        className="w-full max-w-sm space-y-4 rounded-xl border bg-surface-raised p-6 shadow-sm"
-      >
-        <h1 id="app-title" className="text-2xl font-semibold tracking-tight">
-          Calculator
-        </h1>
-        <p className="text-text-muted">
-          Scaffold ready. Colours follow your operating system&apos;s light or dark setting.
+    <div
+      data-ui="app-shell"
+      className={
+        // Safe-area insets keep the pad clear of a phone's rounded corners and home indicator.
+        // The shell only centres itself once the viewport is tall enough to centre in; on a
+        // landscape phone it starts at the top and scrolls, so the display is never cut off.
+        "flex min-h-dvh flex-col items-center justify-start gap-3 bg-surface landscape-short:gap-1 " +
+        "pt-[max(0.75rem,env(safe-area-inset-top))] pr-[max(0.75rem,env(safe-area-inset-right))] " +
+        "pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] " +
+        "[@media(min-height:44rem)]:justify-center"
+      }
+    >
+      <header className="flex w-full max-w-sm items-baseline justify-between gap-3 px-1">
+        <h1 className="text-lg font-semibold tracking-tight">Calculator</h1>
+        <p className="rounded-full border border-border px-2 py-0.5 font-mono text-xs text-text-muted">
+          <span className="sr-only">Version </span>
+          {version}
         </p>
-        <div className="grid grid-cols-3 gap-2" aria-hidden="true">
-          <span className="rounded-md bg-key p-3 text-center text-key-foreground">7</span>
-          <span className="rounded-md bg-key-function p-3 text-center text-key-function-foreground">
-            AC
-          </span>
-          <span className="rounded-md bg-key-operator p-3 text-center text-key-operator-foreground">
-            ÷
-          </span>
-        </div>
-        <p className="text-sm text-danger">Errors render in the danger token.</p>
-        <Button type="button" className="w-full" disabled>
-          Coming in Sprint 2
-        </Button>
-      </section>
-    </main>
+      </header>
+
+      <main className="w-full max-w-sm landscape-short:max-w-2xl">
+        <Calculator />
+      </main>
+    </div>
   );
 }

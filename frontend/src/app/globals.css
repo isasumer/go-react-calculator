@@ -7,6 +7,12 @@
 @custom-variant dark (@media (prefers-color-scheme: dark));
 
 /*
+ * A phone on its side: wide enough for two columns, too short for five rows of keys plus a display.
+ * Components use it to lay themselves out side by side instead of scrolling the display off-screen.
+ */
+@custom-variant landscape-short (@media (orientation: landscape) and (max-height: 32rem));
+
+/*
  * Design tokens. Raw values live in CSS custom properties so they can be swapped per colour scheme;
  * `@theme inline` exposes them as Tailwind colours (`bg-surface`, `text-danger`, `bg-key-operator`, …).
  * The shadcn names (background, primary, destructive, …) alias the calculator tokens so primitives and
