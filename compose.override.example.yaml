@@ -1,0 +1,20 @@
+# Development conveniences. Compose does not read this file; copy it to the
+# name it does read (which .gitignore already ignores):
+#
+#   cp compose.override.example.yaml compose.override.yaml
+#   docker compose up --build --wait
+#
+# Undo it with `rm compose.override.yaml`. Note that scripts/smoke.sh asserts
+# the backend is NOT reachable on the host, so it will fail while this
+# override is in place — that assertion is about the shipped stack.
+
+services:
+  backend:
+    # Talk to the API directly: curl http://localhost:8081/api/v1/operations
+    ports:
+      - "8081:8081"
+    environment:
+      # Human-readable lines instead of JSON, and the request-level detail
+      # that goes with debugging locally.
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
