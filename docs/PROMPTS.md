@@ -623,3 +623,84 @@ httpapi 97.2 %, cmd/server 91.3 %, total 97.9 %.
 **Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green,
 and the built binary exercised with the curl transcript in the PR body (request ID generated and reused,
 preflight allowed and rejected, burst → 429 with `Retry-After` → 200 after the refill).
+
+## Session B1-05 — 2026-09-23
+
+1. `Implement GitHub issue #9 (B1-05: Observability: Prometheus metrics endpoint and calculation metrics) in this repository. Prerequisite #8 is merged; start from a fresh `main`.`
+
+   ```
+   Implement GitHub issue #9 (B1-05: Observability — Prometheus metrics endpoint and calculation metrics) in this repository. Prerequisite #8 is merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 9`, then docs/PLAN.md §1.2 and §1.3 (ADR-0006 row), backend/internal/middleware/chain.go and the chain() assembly in backend/cmd/server/main.go (find the nil metrics slot), the exported API of backend/internal/httpapi (go doc, especially how handlers map errors to problem codes) and backend/internal/observability. Do not explore beyond backend/internal/observability, backend/internal/middleware (one new file), backend/internal/httpapi (only to record calc outcomes), backend/cmd/server (wiring) and docs/adr.
+
+   Constraints for this ticket:
+   - One new dependency: github.com/prometheus/client_golang (promhttp, prometheus, and testutil in tests). Justify it in its own go.mod commit. Nothing else.
+   - internal/observability/metrics.go: `type Metrics struct` created by `NewMetrics(reg prometheus.Registerer, build Build)` (accept a Registerer so tests use a fresh registry; production uses `prometheus.NewRegistry()` plus `collectors.NewGoCollector()` and `collectors.NewProcessCollector(...)`, never the default global registry). Metric families: `http_requests_total{method,route,status}` counter; `http_request_duration_seconds{method,route}` histogram with buckets 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5; `http_in_flight_requests` gauge; `calc_operations_total{operation,outcome}` counter where outcome is "ok" or the problem code (e.g. DIVISION_BY_ZERO); `build_info{version,commit}` gauge fixed at 1. Add `Handler() http.Handler` returning promhttp.HandlerFor(reg, promhttp.HandlerOpts{}).
+   - internal/middleware/metrics.go: `Metrics(m *observability.Metrics) Middleware` that fills the existing nil slot in chain(). Label `route` = `r.Pattern` after routing (read it in a wrapper after the inner handler ran; for unmatched routes use "unmatched"), never the raw path; `status` = captured status code as a string; skip nothing (probes and /metrics itself are counted, that is fine and cheap). In-flight gauge inc/dec with defer.
+   - Handler: `httpapi.Handler` gets an optional `WithMetrics(m)` functional option (follow the existing WithReadiness/WithBuildInfo pattern); on each calculate call it increments calc_operations_total with outcome "ok" or the problem code taken from the mapped Problem. Keep the handler thin; a one-line `record(op, code)` helper is enough.
+   - Route: `GET /metrics` on the same listener, registered in the router (next to /healthz, /readyz, /version) with Cache-Control: no-store. Rate limiting already skips /metrics (verify; if the skip list is by path, /metrics must be in it).
+   - ADR-0006 (docs/adr/0006-runtime-stack.md from the template): stdlib router + log/slog + Prometheus client as the only non-x dependency; why not OpenTelemetry metrics here (follow-up #32); why a single listener now (follow-up #38 for the separate admin port). Flip its row in docs/adr/README.md to Accepted.
+   - Tests: metrics_test.go in observability (families registered, build_info=1 with labels, calc counter increments via testutil.ToFloat64 / CollectAndCount); middleware metrics test (route label is the pattern "/api/v1/calculate" for a request to "/api/v1/calculate?x=1" and "unmatched" for 404; status label; in-flight returns to 0; duration observed once); handler test that a division-by-zero request increments calc_operations_total{operation="divide",outcome="DIVISION_BY_ZERO"}; cmd/server test that GET /metrics returns 200 text/plain with `http_requests_total` present after one API call. Keep coverage ≥ 95 % on the new files and the total ≥ 85 % gate green.
+   - Docs: backend/README.md gains a "Metrics" subsection listing each family, its labels and what to alert on in one line each; root README untouched.
+
+   Finish by: running `make -C backend check` and pasting the output into the PR body, plus a curl transcript of `/metrics` (filtered with grep to the five families) after a few requests including one 422; appending this prompt verbatim to docs/PROMPTS.md under "## Session B1-05 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #9; opening the PR with `gh pr create` using the PR title from the issue and `Closes #9`. Do not merge. Report the PR URL.
+   ```
+   [In English again; no Turkish original to gloss. The prompt arrived wrapped in orchestration rules — work
+   in a dedicated git worktree on `backend/9-metrics`, never merge, never push to `main`, rebase onto
+   `origin/main` before opening the PR and keep both sides if a parallel frontend session has also appended
+   this file. Process, not scope; recorded here so the sequence of commits makes sense.]
+
+**Accepted** — All of it. `internal/observability/metrics.go` holds the five families and the promhttp
+handler; `NewRegistry` builds the process's own registry with the Go and process collectors, and nothing
+anywhere touches `prometheus.DefaultRegisterer`. `internal/middleware/metrics.go` fills the slot `chain()`
+has been carrying since #8, innermost, and reads `r.Pattern` after the router has run. `httpapi.WithMetrics`
+turns on both the recording and the `GET /metrics` route; without it the handler counts nothing and has no
+such route. ADR-0006 is written and Accepted, and `backend/README.md` has the Metrics section. Coverage:
+observability 100 %, middleware 99.6 %, httpapi 97.5 %, cmd/server 92.0 %, total 98.1 % — every function
+added by this ticket is at 100 %.
+
+Two things the prompt did not ask for and that the code now does. `NewMetrics` accepts a nil registerer
+(registers nowhere, stays usable) and `Handler()` answers 500 rather than an empty 200 when the registerer
+cannot gather — a wrapped registerer is write-only by design, and an empty exposition is indistinguishable
+from a healthy service with no traffic. Both are one branch each and both are tested.
+
+**Rejected (why)**
+- `NewMetrics(reg prometheus.Registerer, build Build)` → `build observability.BuildInfo`. `Build` is the
+  function that resolves the running binary's identity; `BuildInfo` is the type it returns and the one
+  `httpapi` already passes around.
+- The route label as `r.Pattern` verbatim → the path part of it. `r.Pattern` is the whole registered
+  pattern, `"POST /api/v1/calculate"`. The method is already its own label, so leaving it in would split
+  every route in two and make `sum by (route)` count each request twice — and the ticket's own acceptance
+  criterion asks for `/api/v1/calculate`. `routeOf` strips the method and a host prefix, keeps wildcards,
+  and is table-tested against every pattern shape `http.ServeMux` can report.
+- `"unmatched"` for a 404, as a general claim → `"unmatched"` is for a request that reached the middleware
+  and matched no pattern. The API registers `/` as a catch-all, so a production 404 is `route="/"`. That is
+  the point of labeling by pattern: the label set belongs to this repository, not to the internet. The
+  middleware test uses a router without a catch-all, where a 404 really is unmatched.
+- "probes and /metrics itself are counted, that is fine and cheap" — true, and the middleware skips
+  nothing, but being innermost means the CORS preflight and the rate limiter's 429 never reach it at all.
+  Worse, a request that `Timeout` answered `503` *is* counted, with whatever status its handler produces
+  when it finally returns. Both are the price of the slot's position, which buys the route label; moving
+  the middleware outward would trade a known gap for an unbounded label. Documented in the package comment,
+  ADR-0006 and the README, and pinned by `TestMetricsRecordsTheHandlerNotTheTimeoutResponse` rather than
+  left to be discovered from a dashboard.
+- A one-line `record(op, code)` called from four places in `calculate` → `calculate` delegates to
+  `evaluate`, so there is exactly one place an attempt finishes and one `record(op, problem)` call. The
+  helper derives `"ok"` from a nil problem; the handler is two statements longer than before.
+- The operation label taken from the request → taken from the `calc` registry. An unsupported operation is
+  counted as `operation="unknown"`. Otherwise `{"operation":"<anything>"}` mints a time series per string
+  a client invents, which makes the metrics backend a denial-of-service target from the open internet.
+  `TestCalculateDoesNotLabelWithClientInput` asserts the client's string never appears.
+- `promhttp.InstrumentHandlerCounter` and friends instead of a hand-written middleware → they wrap a
+  handler from the outside, so they run before the router and cannot see the matched pattern, and they take
+  a `prometheus.ObserverVec` whose label values must be known at wrap time. The whole ticket is the route
+  label.
+- Adding `/metrics` to the rate limiter's skip list → verified, it was already there. #8 put it in
+  `operationalPaths` ahead of this ticket, and the access log's debug-level rule uses the same map.
+- Recording `calc_operations_total` for a request the rate limiter or the timeout rejected → a request that
+  never reached the handler attempted no calculation. `http_requests_total` is the traffic metric.
+
+**Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green,
+and the built binary scraped with the `/metrics` transcript in the PR body (three successful operations,
+one 422 division by zero, a probe, a 405 on `/api/v1/calculate?x=1` that is labeled `/api/v1/calculate`,
+and a 404 that is labeled `/`).
