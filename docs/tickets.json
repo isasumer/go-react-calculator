@@ -1,0 +1,1460 @@
+[
+ {
+  "id": "P0-01",
+  "title": "Repo bootstrap: layout, docs skeleton, templates, Makefile, CLAUDE.md",
+  "sprint": 1,
+  "labels": [
+   "platform",
+   "docs",
+   "sprint-0"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Turn the empty repository into a navigable project where every later session finds the plan, the conventions and the templates it needs.",
+  "scope": [
+   "Root files: .gitignore (Go, Node, coverage, .env*, IDE), .editorconfig, LICENSE (MIT), README.md skeleton with the final section headings (Overview, Quick start, API, Design decisions, Testing, Project structure, Time log, Prompts)",
+   "docs/: PLAN.md (this plan), ARCHITECTURE.md (stub with request-flow diagram), PROMPTS.md (log format + first entry), errors.md (error catalogue stub), adr/README.md + adr/0000-template.md + ADR-0001 (monorepo) + ADR-0002 (frontend stack)",
+   ".github/: pull_request_template.md (checklist from DoD), ISSUE_TEMPLATE/ticket.md + follow-up.md, CODEOWNERS (@isasumer)",
+   "Root Makefile with umbrella targets delegating to backend/ and frontend/: dev, check, test, lint, up, down, e2e (targets may be stubs that fail with a clear message until the app tickets land)",
+   "CLAUDE.md: refine the initial version committed with the plan (session bootstrap per PLAN §2.4): add the `make check` contract, prompt-logging steps and the list of forbidden actions (no scope creep, no plan edits)"
+  ],
+  "out": [
+   "Any application code",
+   "CI workflows (P0-04)"
+  ],
+  "notes": [
+   "Keep README skeleton headings final so later tickets only fill sections, never restructure.",
+   "PROMPTS.md format: `## Session <ticket-id> — <date>` → numbered prompts verbatim → `Accepted` / `Rejected (why)` bullets."
+  ],
+  "accept": [
+   "Fresh clone: `make help` lists targets; `docs/PLAN.md`, `CLAUDE.md`, ADR-0001/0002 present and linked from README",
+   "PR template renders the DoD checklist",
+   "No application code added"
+  ],
+  "tests": [
+   "n/a (docs/tooling only)"
+  ],
+  "files": [
+   "/",
+   "docs/",
+   ".github/",
+   "Makefile",
+   "CLAUDE.md"
+  ],
+  "pr": "chore: bootstrap repository layout, docs skeleton and templates"
+ },
+ {
+  "id": "P0-02",
+  "title": "Backend scaffold: Go module, layout, lint/vet/staticcheck tooling, Makefile",
+  "sprint": 1,
+  "labels": [
+   "backend",
+   "platform",
+   "sprint-0"
+  ],
+  "est": "S",
+  "depends": [
+   "P0-01"
+  ],
+  "goal": "A compiling, lint-clean Go module with the final package layout and quality gates wired, so domain work starts on rails.",
+  "scope": [
+   "backend/go.mod (module github.com/isasumer/go-react-calculator/backend, go 1.27)",
+   "cmd/server/main.go with `func main(){ if err := run(ctx, os.Args, os.Getenv, os.Stdout); err != nil { … os.Exit(1) } }` pattern and a placeholder HTTP server on :8081 returning 404 for everything",
+   "Empty packages with doc.go: internal/calc, internal/httpapi, internal/middleware, internal/config, internal/observability",
+   ".golangci.yml (enable: govet, staticcheck, errcheck, gosimple, revive, gocritic, gosec, misspell, errorlint, exhaustive, nilerr, bodyclose, noctx, gofumpt) with sane exclusions for tests",
+   "backend/Makefile: fmt (gofumpt), lint (golangci-lint), vet, test (`go test -race -shuffle=on -coverprofile`), cover (func summary), coverage-check (script fails <85 %), vuln (govulncheck), build (ldflags version/commit/date), run",
+   "tools: pin versions via `go run` tool directives or `tools.go`; document install in backend/README.md section"
+  ],
+  "out": [
+   "Real routes/handlers (B1-02)",
+   "Dockerfile (H3-01)"
+  ],
+  "notes": [
+   "Go binary lives at ~/.local/go/bin on the dev machine; CI installs via actions/setup-go reading go.mod.",
+   "Prefer `go 1.27` toolchain features: `net/http` method patterns, `slog`, `min/max` builtins, range-over-int."
+  ],
+  "accept": [
+   "`make -C backend check` runs fmt-check, lint, vet, test and passes on the empty module",
+   "Binary starts, logs listening address, exits 0 on SIGINT",
+   "golangci-lint config committed and green"
+  ],
+  "tests": [
+   "A smoke test for run() that starts on port 0 and cancels the context"
+  ],
+  "files": [
+   "backend/"
+  ],
+  "pr": "chore(backend): scaffold Go module, package layout and quality tooling"
+ },
+ {
+  "id": "P0-03",
+  "title": "Frontend scaffold: Vite + React 19 + TS strict, Tailwind v4, ESLint/Prettier, Vitest + RTL + MSW",
+  "sprint": 1,
+  "labels": [
+   "frontend",
+   "platform",
+   "sprint-0"
+  ],
+  "est": "M",
+  "depends": [
+   "P0-01"
+  ],
+  "goal": "A compiling, lint-clean React app with the final folder structure, theme tokens and test harness, mirroring the reference frontend conventions.",
+  "scope": [
+   "`npm create vite@latest frontend -- --template react-ts`, pin Node 22 in .nvmrc and package.json engines",
+   "tsconfig: strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes, path alias `@/* → src/*` (also in vite.config and vitest.config)",
+   "Tailwind v4 (`@tailwindcss/vite`), `src/app/globals.css` with `@theme` tokens (surface, text, accent, danger, key colours), `@custom-variant dark` via prefers-color-scheme",
+   "shadcn init (new-york), add `button` primitive to src/components/ui; `src/lib/utils.ts` with cn()",
+   "ESLint flat config: typescript-eslint recommended-type-checked, react, react-hooks, jsx-a11y, eslint-config-prettier last; Prettier (semi, double quotes, width 100, trailingComma all)",
+   "Vitest + jsdom + @testing-library/react + jest-dom + user-event + msw; `src/test/setup.ts` (jest-dom matchers, msw server lifecycle, localStorage reset); include `src/**/*.test.{ts,tsx}`",
+   "Folder skeleton with .gitkeep/doc comments: app/, components/{ui,providers,shared,calculator}, hooks/, lib/, stores/, types/, test/msw",
+   "`src/config.ts`: typed getConfig() reading import.meta.env (VITE_API_BASE_URL default \"/api\"), validated once",
+   "scripts: dev, build, preview, lint, type-check, test, test:coverage, format, format:check; frontend/Makefile mirroring them",
+   "Convention doc in frontend/README.md: PascalCase feature components, kebab-case ui primitives and hooks, `data-ui` attribute on component roots, co-located tests"
+  ],
+  "out": [
+   "Calculator components, API layer, stores (Sprint 2)"
+  ],
+  "notes": [
+   "Reference conventions come from a production Next.js app: flat lib/, one small zustand store, hand-rolled versioned storage keys, `data-ui` markers. Record the Vite-vs-Next choice in ADR-0002 (already drafted in P0-01; finalise here)."
+  ],
+  "accept": [
+   "`make -C frontend check` runs lint, type-check, test and passes with a placeholder App test",
+   "`npm run build` produces dist/ with hashed assets",
+   "Dark/light tokens switch with the OS setting on the placeholder page"
+  ],
+  "tests": [
+   "Placeholder App.test.tsx renders the app shell",
+   "config.test.ts covers default and override of VITE_API_BASE_URL"
+  ],
+  "files": [
+   "frontend/"
+  ],
+  "pr": "chore(frontend): scaffold Vite React TS app with Tailwind, lint and test harness"
+ },
+ {
+  "id": "P0-04",
+  "title": "CI v1: backend and frontend workflows, path filters, caching, branch protection, Dependabot",
+  "sprint": 1,
+  "labels": [
+   "platform",
+   "sprint-0"
+  ],
+  "est": "M",
+  "depends": [
+   "P0-02",
+   "P0-03"
+  ],
+  "goal": "Every PR is validated automatically; main cannot receive unverified code.",
+  "scope": [
+   ".github/workflows/backend.yml: on PR/push(main) with paths filter `backend/**`; jobs: lint (golangci-lint-action), test (`make test` with -race, upload coverage.out + HTML as artifact, write summary table to $GITHUB_STEP_SUMMARY), vuln (govulncheck)",
+   ".github/workflows/frontend.yml: paths `frontend/**`; setup-node 22 with npm cache; `npm ci`, lint, type-check, test:coverage (upload lcov + summary), build",
+   "Concurrency groups per ref, cancel-in-progress; timeouts; least-privilege `permissions:`; actions pinned to full SHAs with version comments",
+   "Coverage gates enforced in CI (backend script, vitest thresholds)",
+   ".github/dependabot.yml: gomod, npm, github-actions, docker — weekly, grouped minor/patch",
+   "Branch protection on main via `gh api`: require PR, require status checks (backend/lint, backend/test, frontend/check), dismiss stale reviews, linear history, no force push",
+   "Status badges added to README header"
+  ],
+  "out": [
+   "Docker build/e2e jobs (H3-03/H3-04)",
+   "CodeQL/Trivy (H3-05)",
+   "Release workflow (H3-07)"
+  ],
+  "notes": [
+   "Required checks must have stable job names; use a final `ci-ok` job that needs all others so protection references a single check per workflow."
+  ],
+  "accept": [
+   "A PR touching only backend/ runs only the backend workflow",
+   "Coverage summary visible in the job summary",
+   "Direct push to main is rejected",
+   "Badges render green on README"
+  ],
+  "tests": [
+   "Open a throwaway PR that breaks lint; confirm it is blocked; close it"
+  ],
+  "files": [
+   ".github/workflows/",
+   ".github/dependabot.yml",
+   "README.md"
+  ],
+  "pr": "ci: add backend and frontend workflows with coverage gates and branch protection"
+ },
+ {
+  "id": "B1-01",
+  "title": "Domain package internal/calc: operations registry, typed errors, IEEE-754 guards, fuzz + benchmarks",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "testing",
+   "sprint-1"
+  ],
+  "est": "M",
+  "depends": [
+   "P0-02"
+  ],
+  "goal": "A dependency-free, exhaustively tested arithmetic core that the transport layer can trust blindly.",
+  "scope": [
+   "Types: `type Operation string` with constants add, subtract, multiply, divide, power, sqrt, percent; `type Spec struct{ Name Operation; Symbol string; Arity int; fn func(a, b float64) (float64, error) }`",
+   "`Registry` (ordered, immutable after init) with `Lookup(name) (Spec, bool)` and `List() []Spec`; `Evaluate(op Operation, a float64, b *float64) (float64, error)` validating arity",
+   "Sentinel errors: ErrUnknownOperation, ErrDivisionByZero, ErrDomain (sqrt of negative), ErrNotFinite (overflow → ±Inf or NaN), ErrArity; wrap with %w and operation context",
+   "Guards: inputs must be finite (reject NaN/±Inf), result must be finite; percent defined as a*b/100 (\"b percent of a\") and documented; power via math.Pow with domain checks (e.g. (-8)^(1/3) → NaN → ErrDomain)",
+   "Package doc comment explaining the numeric model and linking ADR-0003"
+  ],
+  "out": [
+   "HTTP concerns",
+   "Decimal arithmetic (follow-up FU-02)",
+   "Expression parsing (FU-01)"
+  ],
+  "notes": [
+   "Table-driven tests with named cases; include boundary rows: MaxFloat64 overflow, -0 handling, 0/0, sqrt(0), 0^0 (=1, document), negative percent.",
+   "Add `FuzzEvaluate` asserting: never panics; result is finite whenever err == nil; error is one of the sentinels otherwise.",
+   "Add `BenchmarkEvaluate` for the record (README testing section)."
+  ],
+  "accept": [
+   "100 % statement coverage on internal/calc",
+   "`go test -fuzz=FuzzEvaluate -fuzztime=10s` runs clean",
+   "Every sentinel error has at least one test asserting errors.Is",
+   "ADR-0003 (numeric model) written"
+  ],
+  "tests": [
+   "calc_test.go table tests",
+   "calc_fuzz_test.go",
+   "calc_bench_test.go",
+   "example_test.go with an Example for godoc"
+  ],
+  "files": [
+   "backend/internal/calc/",
+   "docs/adr/0003-numeric-model.md"
+  ],
+  "pr": "feat(backend): add calc domain package with registry, typed errors and fuzz tests"
+ },
+ {
+  "id": "B1-02",
+  "title": "HTTP transport internal/httpapi: routes, strict JSON decoding, validation, problem+json errors",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "sprint-1"
+  ],
+  "est": "L",
+  "depends": [
+   "B1-01"
+  ],
+  "goal": "The public API contract from PLAN §1.4 implemented end-to-end with httptest coverage of every documented status code.",
+  "scope": [
+   "Router: `http.NewServeMux()` with method patterns (`POST /api/v1/calculate`, `GET /api/v1/operations`); 405 with Allow header for wrong methods; 404 problem for unknown routes",
+   "DTOs: CalculateRequest{Operation string; A *float64; B *float64}, CalculateResponse, OperationsResponse; JSON tags; `B` optional for unary ops and rejected when supplied to unary ops (422 code=UNEXPECTED_OPERAND)",
+   "Decoding: enforce Content-Type application/json (415), `http.MaxBytesReader` 4 KiB (413), `json.Decoder` with DisallowUnknownFields and a check that exactly one JSON value is present (400 code=INVALID_BODY with json error translated to field/offset)",
+   "Validation layer producing `errors[]` (field, message) — missing operation/a/b, unknown operation (422 UNSUPPORTED_OPERATION), non-finite input (JSON can't carry these, but guard anyway)",
+   "Error mapping: calc.ErrDivisionByZero→422 DIVISION_BY_ZERO, ErrDomain→422 DOMAIN_ERROR, ErrNotFinite→422 RESULT_NOT_FINITE, unknown→500 INTERNAL (no detail leak)",
+   "`problem` package/file: Problem struct (type,title,status,detail,instance,code,requestId,errors), `Write(w, r, p)` sets `Content-Type: application/problem+json`; catalogue in docs/errors.md with anchors used as `type`",
+   "Response encoding via a small `writeJSON` helper (sets charset, handles encode errors, no trailing newline issues)",
+   "Handlers take dependencies via a struct (`Handler{calc *calc.Registry, log *slog.Logger}`) — no globals"
+  ],
+  "out": [
+   "Middleware (B1-04)",
+   "Config/lifecycle (B1-03)",
+   "OpenAPI file (B1-06)"
+  ],
+  "notes": [
+   "Keep handlers thin: decode → validate → calc.Evaluate → encode. Business rules live in calc.",
+   "Use `errors.As`/`errors.Is` for mapping; a `mapError(err) Problem` function with its own table test.",
+   "Write golden-file tests for problem bodies (testdata/*.json) so the documented examples in README are literally the test fixtures."
+  ],
+  "accept": [
+   "Every row of PLAN §1.4 has a passing httptest case",
+   "Unknown field, trailing garbage, empty body, non-object body each produce a 400 with a helpful detail",
+   "Coverage ≥ 90 % on internal/httpapi",
+   "docs/errors.md lists every code with status, meaning and example"
+  ],
+  "tests": [
+   "handler_test.go (table over request → status/code/body)",
+   "problem_test.go",
+   "golden files under testdata/"
+  ],
+  "files": [
+   "backend/internal/httpapi/",
+   "docs/errors.md"
+  ],
+  "pr": "feat(backend): implement calculate/operations endpoints with strict validation and problem+json errors"
+ },
+ {
+  "id": "B1-03",
+  "title": "Config, server lifecycle, graceful shutdown, health/readiness/version endpoints",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "sprint-1"
+  ],
+  "est": "M",
+  "depends": [
+   "B1-02"
+  ],
+  "goal": "The service behaves like a well-run production process: 12-factor config, sane timeouts, clean shutdown, probes.",
+  "scope": [
+   "internal/config: `Load(getenv func(string) string) (Config, error)` — PORT (8081), HOST, LOG_LEVEL, LOG_FORMAT (json|text), CORS_ALLOWED_ORIGINS (csv), READ_HEADER_TIMEOUT, READ_TIMEOUT, WRITE_TIMEOUT, IDLE_TIMEOUT, SHUTDOWN_TIMEOUT, REQUEST_TIMEOUT, RATE_LIMIT_RPS, RATE_LIMIT_BURST, MAX_BODY_BYTES; typed, validated, with defaults; `String()` redacting nothing sensitive (there is none) for startup log",
+   "cmd/server: `run(ctx, args, getenv, stdout)` builds config, logger, registry, handler, middleware chain, `http.Server` with all timeouts, listens, and on SIGTERM/SIGINT drains with SHUTDOWN_TIMEOUT; returns error instead of calling os.Exit deep in the stack; `-version` flag prints build info and exits",
+   "Endpoints: `GET /healthz` (liveness, always 200 once process is up), `GET /readyz` (200 after listener bound, 503 while shutting down — atomic flag flipped before drain), `GET /version` {version, commit, buildDate, goVersion}",
+   "Build info via `-ldflags -X` variables in internal/observability/buildinfo.go with `debug.ReadBuildInfo` fallback",
+   "Startup log line with resolved config; shutdown log with drain duration"
+  ],
+  "out": [
+   "Metrics (B1-05)",
+   "Middleware behaviours themselves (B1-04)"
+  ],
+  "notes": [
+   "Test shutdown by starting run() on port 0, hitting /readyz, cancelling ctx, asserting run returns nil within the timeout and in-flight request completes.",
+   "Readiness must flip before `Shutdown` so a load balancer stops routing first; sleep a configurable pre-stop delay (default 0 locally, documented for k8s)."
+  ],
+  "accept": [
+   "`PORT=0 go run ./cmd/server` logs the bound address; Ctrl-C returns exit 0 within SHUTDOWN_TIMEOUT",
+   "Invalid env value fails fast with a message naming the variable",
+   "/healthz /readyz /version behave as specified with tests"
+  ],
+  "tests": [
+   "config_test.go (defaults, overrides, invalid values)",
+   "main_test.go lifecycle test",
+   "probe handler tests"
+  ],
+  "files": [
+   "backend/cmd/server/",
+   "backend/internal/config/",
+   "backend/internal/observability/buildinfo.go"
+  ],
+  "pr": "feat(backend): add typed config, graceful lifecycle and health/readiness/version endpoints"
+ },
+ {
+  "id": "B1-04",
+  "title": "Middleware chain: recovery, request ID, structured logging, timeout, CORS, security headers, rate limiting",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "sprint-1"
+  ],
+  "est": "L",
+  "depends": [
+   "B1-03"
+  ],
+  "goal": "Cross-cutting production behaviour, composed explicitly and individually tested.",
+  "scope": [
+   "`middleware.Chain(h, mws...)` helper; order (outermost first): Recover → RequestID → Logger → Timeout → SecurityHeaders → CORS → RateLimit → (metrics, B1-05) → router",
+   "RequestID: honour incoming `X-Request-ID` if it matches `^[A-Za-z0-9-_]{1,64}$`, else generate (crypto/rand 16 bytes base32); set on response and in context; problem responses echo it",
+   "Logger: slog with request-scoped attrs (request_id, method, path, status, bytes, duration_ms, remote_ip, user_agent); wrap ResponseWriter to capture status/bytes (implement Flush/Unwrap); log level per status (5xx error, 4xx warn, else info); skip /healthz /readyz /metrics at info level",
+   "Recover: catch panics → log with stack → 500 problem (code=INTERNAL); never leaks panic value to client",
+   "Timeout: `http.TimeoutHandler`-like but emitting a problem+json 503/504 (code=TIMEOUT); REQUEST_TIMEOUT from config",
+   "SecurityHeaders: X-Content-Type-Options=nosniff, X-Frame-Options=DENY, Referrer-Policy=no-referrer, Cache-Control=no-store on API routes, Content-Security-Policy default-src 'none' (API only serves JSON)",
+   "CORS: allowlist from config; handles preflight (204) with Access-Control-Allow-Methods/Headers/Max-Age; Vary: Origin; disabled (no headers) when list is empty — production uses same-origin proxy",
+   "RateLimit: per-client-IP token bucket (golang.org/x/time/rate) with LRU/TTL eviction of idle buckets; 429 problem (code=RATE_LIMITED) with Retry-After; client IP from RemoteAddr only (document that X-Forwarded-For trust is a deployment decision, off by default; TRUST_PROXY_HEADERS env to enable)"
+  ],
+  "out": [
+   "Metrics middleware (B1-05)",
+   "Auth (not required)"
+  ],
+  "notes": [
+   "Each middleware in its own file with its own test using httptest and a recording handler.",
+   "Keep x/time/rate as the only new dependency here; justify in go.mod tidy commit message."
+  ],
+  "accept": [
+   "Panic in a handler yields 500 problem with request id, process keeps serving",
+   "Preflight from allowed origin → 204 with correct headers; from other origin → no CORS headers",
+   "Burst above limit → 429 with Retry-After; recovers after refill",
+   "Every response carries X-Request-ID",
+   "Logs are JSON in LOG_FORMAT=json with the documented keys"
+  ],
+  "tests": [
+   "One *_test.go per middleware",
+   "chain_test.go asserting order via a probe handler"
+  ],
+  "files": [
+   "backend/internal/middleware/"
+  ],
+  "pr": "feat(backend): add middleware chain (recovery, request id, logging, timeout, CORS, security headers, rate limit)"
+ },
+ {
+  "id": "B1-05",
+  "title": "Observability: Prometheus metrics endpoint and calculation metrics",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "sprint-1"
+  ],
+  "est": "S",
+  "depends": [
+   "B1-04"
+  ],
+  "goal": "Operators can see traffic, latency, errors and per-operation usage without reading logs.",
+  "scope": [
+   "internal/observability/metrics.go: registry (non-global `prometheus.NewRegistry` + Go/process collectors), `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route}` histogram (buckets tuned for ms), `http_in_flight_requests`, `calc_operations_total{operation,outcome}` (outcome=ok|error_code), `build_info{version,commit}` gauge = 1",
+   "Metrics middleware using the route pattern (`r.Pattern` from Go 1.22 mux) as the label, never the raw path (cardinality)",
+   "`GET /metrics` via promhttp on the same listener (documented; separate admin port is a follow-up)",
+   "Handler increments calc_operations_total with the problem `code` on error",
+   "ADR-0006 (stdlib router + slog + Prometheus)"
+  ],
+  "out": [
+   "Tracing/OpenTelemetry (FU-03)",
+   "Grafana dashboards (FU-03)"
+  ],
+  "notes": [
+   "Use a small `Metrics` struct injected into middleware/handler so tests can use a fresh registry and assert via `testutil.CollectAndCount` / `ToFloat64`."
+  ],
+  "accept": [
+   "`curl /metrics` shows the five metric families with expected labels after a few requests",
+   "Route label is `/api/v1/calculate`, not `/api/v1/calculate?x=1` or path variants",
+   "Tests assert counters via prometheus/testutil"
+  ],
+  "tests": [
+   "metrics_test.go",
+   "middleware metrics test"
+  ],
+  "files": [
+   "backend/internal/observability/",
+   "backend/internal/middleware/metrics.go",
+   "docs/adr/0006-runtime-stack.md"
+  ],
+  "pr": "feat(backend): expose Prometheus metrics for HTTP and calculator operations"
+ },
+ {
+  "id": "B1-06",
+  "title": "OpenAPI 3.1 contract: authored spec, served endpoint, contract tests",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "docs",
+   "sprint-1"
+  ],
+  "est": "M",
+  "depends": [
+   "B1-02"
+  ],
+  "goal": "The API is described by a machine-readable contract that the implementation is proven to honour.",
+  "scope": [
+   "backend/api/openapi.yaml: info, servers, paths (/api/v1/calculate, /api/v1/operations, /healthz, /readyz, /version), components: CalculateRequest (oneOf binary/unary via `operation` enum + required rules), CalculateResponse, Operation, Problem (RFC 9457 + code enum), examples for every documented error",
+   "Serve the file at `GET /api/v1/openapi.yaml` (embed via `embed.FS`, Content-Type application/yaml) and document viewing it with Redoc/Swagger UI via a one-liner docker command in README",
+   "Contract tests: load spec with kin-openapi (test dependency only), validate the spec itself, then for each httptest case in B1-02 validate the response against the spec's response schema (openapi3filter)",
+   "CI: spectral lint (`npx @stoplight/spectral-cli lint`) as a step in backend workflow (non-blocking warning level for style rules, blocking for errors)"
+  ],
+  "out": [
+   "Code generation from the spec (deliberately not; ADR-0004 explains the hand-written approach for a 2-endpoint API)"
+  ],
+  "notes": [
+   "Keep examples in the spec identical to README examples and golden test files — one truth."
+  ],
+  "accept": [
+   "Spec validates (spectral + kin-openapi loader)",
+   "All existing httptest cases also pass schema validation",
+   "Endpoint serves the spec with correct content type",
+   "README API section links to the spec"
+  ],
+  "tests": [
+   "openapi_test.go (spec validity + response validation wrapper reused by handler tests)"
+  ],
+  "files": [
+   "backend/api/openapi.yaml",
+   "backend/internal/httpapi/openapi.go",
+   "backend/internal/httpapi/openapi_test.go"
+  ],
+  "pr": "feat(backend): add OpenAPI 3.1 contract, serve it and validate responses against it in tests"
+ },
+ {
+  "id": "B1-07",
+  "title": "Backend test hardening: integration suite, race/shuffle, golden fixtures, coverage gate script",
+  "sprint": 2,
+  "labels": [
+   "backend",
+   "testing",
+   "sprint-1"
+  ],
+  "est": "M",
+  "depends": [
+   "B1-05",
+   "B1-06"
+  ],
+  "goal": "The backend test suite is the coverage report the assignment asks for: complete, reproducible and enforced.",
+  "scope": [
+   "internal/httpapi/integration_test.go (build tag `integration` or plain, decide and document): starts the real `run()` on port 0 with env overrides, exercises the full middleware chain over a real TCP client: happy path, 422s, 429 burst, X-Request-ID echo, /metrics after traffic, graceful shutdown mid-request",
+   "`scripts/coverage-check.sh` parsing `go tool cover -func` total, failing below 85 %; excludes cmd/ main wiring lines via `//go:build` or by testing run() itself",
+   "`make cover-html` producing coverage.html; CI uploads both .out and .html as artifacts; job summary shows per-package table",
+   "`go test -race -shuffle=on -count=1` in CI; `t.Parallel()` where safe",
+   "README Testing section: how to run unit/fuzz/bench/integration, current numbers (filled by D4-01)"
+  ],
+  "out": [
+   "e2e with the frontend (H3-04)",
+   "Load testing (FU-07)"
+  ],
+  "notes": [
+   "Integration tests should use `t.Setenv` and never bind fixed ports.",
+   "Keep the total runtime under 10 s so nobody skips it."
+  ],
+  "accept": [
+   "`make -C backend test` prints total coverage ≥ 85 % and the gate script enforces it",
+   "Integration test covers shutdown and rate limiting paths",
+   "CI artifact contains coverage.html"
+  ],
+  "tests": [
+   "integration_test.go",
+   "coverage-check script test (shell, trivial)"
+  ],
+  "files": [
+   "backend/internal/httpapi/integration_test.go",
+   "backend/scripts/",
+   "backend/Makefile",
+   ".github/workflows/backend.yml"
+  ],
+  "pr": "test(backend): add integration suite, race/shuffle runs and enforced coverage gate"
+ },
+ {
+  "id": "F2-01",
+  "title": "API layer: apiFetch + ApiError (problem+json aware), endpoints config, zod schemas, TanStack hooks, MSW handlers",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "M",
+  "depends": [
+   "P0-03",
+   "B1-02"
+  ],
+  "goal": "A single, typed, tested doorway to the backend that every component uses and no component bypasses.",
+  "scope": [
+   "src/lib/api.ts: `apiFetch<T>(path, { method, body, signal, schema? })` over native fetch; base URL from getConfig().apiBaseUrl; JSON headers; AbortSignal.timeout(10s) default; parses `application/problem+json` into `ApiError { status, code, title, detail, requestId, errors[] }`; network failures → ApiError code=NETWORK; non-JSON 5xx → code=UNEXPECTED",
+   "src/lib/query-config.ts: endpoint constants (CALCULATE_ENDPOINT, OPERATIONS_ENDPOINT), query keys, STALE_TIME",
+   "src/types/calculator.ts: OperationName union, CalculateRequest/Response, OperationSpec, ProblemDetails; zod schemas (`calculateResponseSchema`, `operationsResponseSchema`, `problemSchema`) used by apiFetch to validate responses at runtime (fail closed with code=INVALID_RESPONSE)",
+   "src/hooks/use-calculate.ts: `useCalculate()` → useMutation<CalculateResponse, ApiError, CalculateRequest>; src/hooks/use-operations.ts: useQuery with staleTime Infinity and a static fallback list so the UI never blocks on the network",
+   "src/components/providers/QueryProvider.tsx: defaults retry: 0 for mutations, 1 for queries, refetchOnWindowFocus false",
+   "src/test/msw/handlers.ts: handlers replicating the backend contract (incl. DIVISION_BY_ZERO, RATE_LIMITED, malformed) + `server.ts`; wired in setup.ts"
+  ],
+  "out": [
+   "UI components",
+   "State machine"
+  ],
+  "notes": [
+   "Mirror the reference codebase's apiFetch shape (typed error class with status/code/requestId, envelope unwrapping) but keep only what this app needs.",
+   "Export `isApiError(e)` type guard; map codes → user messages in `src/lib/error-messages.ts` (single table, tested)."
+  ],
+  "accept": [
+   "apiFetch tests: success, problem+json 422 mapped to ApiError with code/errors, 429 with retryAfter, network error, invalid JSON body, schema mismatch",
+   "Hooks tested with renderHook + QueryClient wrapper",
+   "No `any`; ESLint clean"
+  ],
+  "tests": [
+   "api.test.ts",
+   "error-messages.test.ts",
+   "use-calculate.test.tsx",
+   "use-operations.test.tsx"
+  ],
+  "files": [
+   "frontend/src/lib/",
+   "frontend/src/hooks/",
+   "frontend/src/types/",
+   "frontend/src/test/msw/",
+   "frontend/src/components/providers/"
+  ],
+  "pr": "feat(frontend): add typed API layer with problem+json errors, zod validation and query hooks"
+ },
+ {
+  "id": "F2-02",
+  "title": "Calculator engine + store: pure state machine (calculator-engine.ts) and zustand store with injected evaluate",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "L",
+  "depends": [
+   "F2-01"
+  ],
+  "goal": "All calculator behaviour lives in a pure, exhaustively unit-tested module; the store only wires it to the API.",
+  "scope": [
+   "src/lib/calculator-engine.ts: `type CalcState = { phase: 'idle'|'enteringA'|'operatorSelected'|'enteringB'|'result'|'error'; display: string; a: number|null; b: number|null; operator: BinaryOp|null; error: string|null; pendingUnary?: ... }` and pure transition functions: inputDigit, inputDecimal, toggleSign, backspace, clearEntry, clearAll, setOperator, requestEvaluate → returns `{ state, effect?: { kind:'calculate', request: CalculateRequest } }`, applyResult, applyError, applyUnary (sqrt, percent as unary-with-context)",
+   "Input rules: max 16 significant characters, single decimal point, no leading zeros (except '0.'), '-0' normalised, operator pressed twice replaces operator, operator right after result chains (result becomes `a`), Enter with no `b` reuses `a` (classic behaviour, documented), any digit after result starts fresh",
+   "Percent semantics in the UI: `a op b %` → b becomes a*b/100 for +/−, and b/100 for ×/÷ (spreadsheet-calculator convention) OR simply call backend percent(a,b) — choose backend `percent` for `a % b` display path and document in ADR-0008",
+   "src/stores/useCalculatorStore.ts: zustand store holding CalcState + actions; `evaluate` effect is executed by an injected `evaluator: (req) => Promise<CalculateResponse>` (set from the component via useCalculate) so the store is testable without React Query",
+   "Selectors for display, phase, isBusy, error"
+  ],
+  "out": [
+   "Rendering",
+   "Keyboard mapping (F2-04)",
+   "History (F2-05)"
+  ],
+  "notes": [
+   "Model as explicit phase enum + exhaustive switch (`satisfies never`) so adding a phase fails the type-check.",
+   "Every transition tested with a table: from-state × input → to-state; snapshot the sequence '12 + 7 = ' , '5 ÷ 0 =', '9 √', '200 + 15 %', '= = ='."
+  ],
+  "accept": [
+   "100 % branch coverage on calculator-engine.ts",
+   "Store test drives a full calculation with a fake evaluator (resolve + reject with ApiError) and asserts phases/display",
+   "No React imports in engine"
+  ],
+  "tests": [
+   "calculator-engine.test.ts",
+   "useCalculatorStore.test.ts"
+  ],
+  "files": [
+   "frontend/src/lib/calculator-engine.ts",
+   "frontend/src/stores/useCalculatorStore.ts",
+   "docs/adr/0008-frontend-evaluation-semantics.md"
+  ],
+  "pr": "feat(frontend): add pure calculator state machine and zustand store"
+ },
+ {
+  "id": "F2-03",
+  "title": "UI: Calculator, Display, Keypad, Key components; responsive layout, dark mode, accessibility",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "L",
+  "depends": [
+   "F2-02"
+  ],
+  "goal": "A calculator that looks deliberate, works on a phone, and is usable with a screen reader.",
+  "scope": [
+   "src/components/calculator/Calculator.tsx (composition + wiring store ↔ useCalculate), Display.tsx (expression line + result line, auto-shrinking font via CSS clamp, `aria-live=\"polite\"` region, error state styling), Keypad.tsx (CSS grid 4×5, operator column accent), Key.tsx (variant: digit|operator|action|equals, uses ui/button, `aria-label`, `aria-keyshortcuts`), OperationsBar for unary ops (√, %, x^y) driven by useOperations",
+   "Layout: mobile-first; max-width 24rem centred; keys ≥ 44×44 px; safe-area insets; landscape phone check; no horizontal scroll at 320 px",
+   "Theme: tokens from globals.css; dark mode via prefers-color-scheme; focus-visible rings; reduced-motion respected",
+   "Busy state: keys disabled + subtle spinner in Display while a mutation is pending; requests are sequential (store ignores input while busy except Escape)",
+   "`data-ui` attributes on every component root (`data-ui=\"calculator\"`, `\"calculator.display\"`, …)",
+   "src/app/App.tsx renders header (title + version from /version fetched lazily or build-time) and Calculator; ErrorBoundary provider"
+  ],
+  "out": [
+   "Keyboard shortcuts (F2-04)",
+   "History panel (F2-05)",
+   "Number formatting (F2-06, use a stub formatter until then)"
+  ],
+  "notes": [
+   "Design brief: quiet neutral surface, one accent for operators, distinct equals key, monospace tabular numerals for the display (`font-variant-numeric: tabular-nums`).",
+   "Use Testing Library queries by role/label — this doubles as the a11y check."
+  ],
+  "accept": [
+   "Renders and performs 12 + 7 = 19 through the MSW-mocked API in a component test",
+   "Division by zero shows the mapped message in the display error slot and clears on next input",
+   "axe (vitest-axe) reports no violations on the initial render",
+   "Lighthouse mobile a11y ≥ 95 locally (manual, note in PR)"
+  ],
+  "tests": [
+   "Calculator.test.tsx (user-event flows)",
+   "Display.test.tsx",
+   "Key.test.tsx",
+   "a11y.test.tsx with vitest-axe"
+  ],
+  "files": [
+   "frontend/src/components/calculator/",
+   "frontend/src/app/",
+   "frontend/src/components/ui/"
+  ],
+  "pr": "feat(frontend): build calculator UI with responsive layout, dark mode and accessible controls"
+ },
+ {
+  "id": "F2-04",
+  "title": "Keyboard support and input-validation UX",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "S",
+  "depends": [
+   "F2-03"
+  ],
+  "goal": "Power users can drive the calculator without a mouse; invalid input is prevented rather than reported.",
+  "scope": [
+   "src/hooks/use-keyboard.ts: window keydown mapping — digits, '.', '+', '-', '*', '/', '^', '%', Enter/'=', Escape (clear all), Backspace, Delete (clear entry), 'r' for √ (documented); ignores events with modifiers or when focus is in an input/textarea; prevents default only for handled keys",
+   "Visual feedback: the matching Key gets a transient pressed state (store `lastKey` with timestamp or CSS animation via data attribute)",
+   "Inline validation: attempting a second '.' or exceeding max digits is a no-op with a subtle shake on Display (respecting reduced-motion); operator right after operator replaces silently",
+   "Server-side errors (422) render in Display error slot with the mapped message and the request id in a tooltip/title for support",
+   "Network/timeout/429 errors show a non-blocking toast (sonner) with retry action; store returns to previous phase"
+  ],
+  "out": [
+   "History",
+   "Formatting"
+  ],
+  "notes": [
+   "Keep the mapping table exported and tested as data; the hook test uses user-event.keyboard()."
+  ],
+  "accept": [
+   "`user.keyboard('12+7{Enter}')` yields 19 in a component test",
+   "Escape clears; Backspace edits; '%' and '^' route to the correct operations",
+   "Typing into an unrelated input does not trigger the calculator"
+  ],
+  "tests": [
+   "use-keyboard.test.tsx",
+   "keyboard flows in Calculator.test.tsx"
+  ],
+  "files": [
+   "frontend/src/hooks/use-keyboard.ts",
+   "frontend/src/components/calculator/"
+  ],
+  "pr": "feat(frontend): add keyboard support and input-validation feedback"
+ },
+ {
+  "id": "F2-05",
+  "title": "History with localStorage persistence (versioned key, validated on read) and HistoryPanel",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "M",
+  "depends": [
+   "F2-03"
+  ],
+  "goal": "Recent calculations survive reloads and can be recalled, using a safe, versioned storage helper.",
+  "scope": [
+   "src/lib/storage.ts: `createStorageKey('history', 1) → 'calc.history.v1'`, `readJSON(key, schema)` / `writeJSON(key, value)` / `remove(key)` wrapping localStorage in try/catch (private mode, quota), zod-validated on read (invalid → discard + console.warn once), SSR/no-window safe",
+   "src/stores/useHistoryStore.ts: entries `{ id, operation, a, b, result, at }`, max 50 (FIFO), actions add/clear/remove; hydrated from storage on init; persisted on change (subscribe) — hand-rolled, not zustand/persist, matching the reference convention and keeping schema control explicit",
+   "src/components/calculator/HistoryPanel.tsx: collapsible list (mobile: sheet/drawer via vaul; desktop: side column), each row shows `a op b = result`, click recalls result into Display as `a`, clear button with confirm",
+   "Calculator wires successful mutation → history.add"
+  ],
+  "out": [
+   "Server-side history (FU-04)"
+  ],
+  "notes": [
+   "Storage key version bump policy in a comment: bump when the schema changes; old keys are removed by a tiny migration list."
+  ],
+  "accept": [
+   "Entries persist across a simulated reload (re-create store, read from mocked localStorage)",
+   "Corrupted JSON in storage does not crash the app",
+   "Recall flow tested with user-event",
+   "Max 50 enforced"
+  ],
+  "tests": [
+   "storage.test.ts",
+   "useHistoryStore.test.ts",
+   "HistoryPanel.test.tsx"
+  ],
+  "files": [
+   "frontend/src/lib/storage.ts",
+   "frontend/src/stores/useHistoryStore.ts",
+   "frontend/src/components/calculator/HistoryPanel.tsx"
+  ],
+  "pr": "feat(frontend): persist calculation history in localStorage with a history panel"
+ },
+ {
+  "id": "F2-06",
+  "title": "Number formatting and parsing helpers (display precision, grouping, exponent)",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "sprint-2"
+  ],
+  "est": "S",
+  "depends": [
+   "F2-02"
+  ],
+  "goal": "Results are shown the way a calculator user expects, without lying about the underlying value.",
+  "scope": [
+   "src/lib/format-number.ts: `formatResult(n, { maxSignificant: 12 })` → trims float noise (0.30000000000000004 → 0.3), switches to exponent beyond 1e15 / below 1e-6, handles -0, Infinity/NaN never reach here (guarded upstream, throw if they do), `formatEntry(raw)` adds thousands grouping to the in-progress input without touching the trailing '.', `parseEntry(raw)` → number",
+   "Locale: use `Intl.NumberFormat('en-US')` explicitly (ADR-0007) — locale switch is a follow-up (FU-05)",
+   "Display integration: full-precision value available on hover/title and copied on click (copy-to-clipboard with toast)"
+  ],
+  "out": [
+   "i18n"
+  ],
+  "notes": [
+   "Property-style tests: for random doubles, `Number(formatResult(x))` is within 1e-12 relative error of x."
+  ],
+  "accept": [
+   "Table tests for the documented examples in ADR-0007",
+   "Display shows 0.3 for 0.1+0.2 while the API response (visible in history tooltip) shows the raw value"
+  ],
+  "tests": [
+   "format-number.test.ts"
+  ],
+  "files": [
+   "frontend/src/lib/format-number.ts",
+   "docs/adr/0007-display-precision.md"
+  ],
+  "pr": "feat(frontend): add number formatting helpers with documented display precision"
+ },
+ {
+  "id": "F2-07",
+  "title": "Frontend test hardening: coverage thresholds, CI summary, a11y and MSW conventions documented",
+  "sprint": 3,
+  "labels": [
+   "frontend",
+   "testing",
+   "sprint-2"
+  ],
+  "est": "S",
+  "depends": [
+   "F2-04",
+   "F2-05",
+   "F2-06"
+  ],
+  "goal": "The frontend suite is enforced at the same standard as the backend and readable as documentation.",
+  "scope": [
+   "vitest.config: coverage provider v8, thresholds lines 85 / branches 80 / functions 85, `include: src/**`, exclude test/ and types-only files, reporters text + lcov + json-summary",
+   "CI: post the json-summary as a table in $GITHUB_STEP_SUMMARY; upload lcov artifact",
+   "frontend/README.md Testing section: layers (engine unit → hooks → components with MSW → e2e), how to run/watch, how to add MSW handlers",
+   "Fill any gaps revealed by the threshold (target: every user-facing path has a component test)"
+  ],
+  "out": [
+   "Playwright e2e (H3-04)"
+  ],
+  "notes": [
+   "Do not chase 100 %; chase every branch that a reviewer might ask about (errors, busy state, storage failures)."
+  ],
+  "accept": [
+   "`npm run test:coverage` passes thresholds",
+   "CI summary shows the table",
+   "README testing section complete"
+  ],
+  "tests": [
+   "as needed to reach thresholds"
+  ],
+  "files": [
+   "frontend/vitest.config.ts",
+   "frontend/README.md",
+   ".github/workflows/frontend.yml"
+  ],
+  "pr": "test(frontend): enforce coverage thresholds and document the testing strategy"
+ },
+ {
+  "id": "H3-01",
+  "title": "Backend container: multi-stage distroless image, non-root, static binary, healthcheck subcommand",
+  "sprint": 4,
+  "labels": [
+   "backend",
+   "platform",
+   "sprint-3"
+  ],
+  "est": "S",
+  "depends": [
+   "B1-03"
+  ],
+  "goal": "A minimal, reproducible, secure backend image.",
+  "scope": [
+   "backend/Dockerfile: `golang:1.27-alpine` builder with module cache mounts (`--mount=type=cache`), `CGO_ENABLED=0 GOFLAGS=-trimpath`, `-ldflags='-s -w -X …version'` from build args; final `gcr.io/distroless/static-debian12:nonroot`; EXPOSE 8081; `USER nonroot`",
+   "`server -healthcheck` subcommand that GETs /readyz and exits 0/1 (distroless has no curl) used by Docker HEALTHCHECK and compose",
+   "backend/.dockerignore; image labels (org.opencontainers.image.*)",
+   "Makefile: `docker-build`, `docker-run`; document expected image size (< 15 MB) in README"
+  ],
+  "out": [
+   "Compose (H3-03)",
+   "Registry publishing (H3-07)"
+  ],
+  "notes": [
+   "Build must not require network at runtime; verify `docker run --network none` still serves."
+  ],
+  "accept": [
+   "`docker build` succeeds with BuildKit; `docker run -p 8081:8081 image` answers /healthz",
+   "`docker inspect` shows non-root user and healthcheck",
+   "Image size recorded in PR"
+  ],
+  "tests": [
+   "Shell smoke in CI later (H3-03); local manual verification documented in PR"
+  ],
+  "files": [
+   "backend/Dockerfile",
+   "backend/.dockerignore",
+   "backend/cmd/server/healthcheck.go"
+  ],
+  "pr": "build(backend): add distroless multi-stage Dockerfile with healthcheck subcommand"
+ },
+ {
+  "id": "H3-02",
+  "title": "Frontend container: Vite build served by unprivileged nginx with /api reverse proxy and hardened config",
+  "sprint": 4,
+  "labels": [
+   "frontend",
+   "platform",
+   "sprint-3"
+  ],
+  "est": "M",
+  "depends": [
+   "F2-03"
+  ],
+  "goal": "Production-shaped static hosting with same-origin API access, so no CORS is needed and the API is never exposed directly.",
+  "scope": [
+   "frontend/Dockerfile: `node:22-alpine` deps/build stages with npm cache mount → `nginxinc/nginx-unprivileged:alpine-slim`; listens on 8080; copies dist/ and nginx/nginx.conf + templates",
+   "nginx config: SPA fallback (`try_files … /index.html`), immutable cache for hashed assets, `no-cache` for index.html, gzip/brotli if available, security headers (CSP allowing self + inline style hash if needed, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), `/api/` → `proxy_pass http://backend:8081` with `proxy_set_header X-Request-ID $request_id` when absent, `/healthz` static 200",
+   "Runtime configurability: `BACKEND_UPSTREAM` env consumed via nginx envsubst templates so the same image works in compose and elsewhere; frontend default `VITE_API_BASE_URL=/api` baked at build",
+   "frontend/.dockerignore"
+  ],
+  "out": [
+   "TLS termination (documented as ingress responsibility)"
+  ],
+  "notes": [
+   "Verify CSP does not break Vite output (no inline scripts by default; style handling via Tailwind is fine)."
+  ],
+  "accept": [
+   "`docker run` serves the app; `/api/v1/operations` proxied when backend reachable",
+   "Security headers present (curl -I)",
+   "Image runs as non-root (id 101)"
+  ],
+  "tests": [
+   "Manual + compose smoke (H3-03)"
+  ],
+  "files": [
+   "frontend/Dockerfile",
+   "frontend/nginx/",
+   "frontend/.dockerignore"
+  ],
+  "pr": "build(frontend): add nginx-based production image with API reverse proxy"
+ },
+ {
+  "id": "H3-03",
+  "title": "Compose stack, smoke script, Make targets, and CI job that builds and smoke-tests the images",
+  "sprint": 4,
+  "labels": [
+   "platform",
+   "testing",
+   "sprint-3"
+  ],
+  "est": "M",
+  "depends": [
+   "H3-01",
+   "H3-02"
+  ],
+  "goal": "`docker compose up` gives a reviewer the whole application in one command, and CI proves it every PR.",
+  "scope": [
+   "compose.yaml: services backend (build ./backend, healthcheck via `-healthcheck`, env LOG_FORMAT=json, read_only rootfs, `cap_drop: [ALL]`, `security_opt: no-new-privileges`, mem/cpu limits) and frontend (build ./frontend, depends_on backend condition service_healthy, ports 8080:8080); named network; no host port for backend by default (override file exposes 8081 for local API poking)",
+   "compose.override.example.yaml → documented copy step for dev-time overrides",
+   "scripts/smoke.sh: waits for http://localhost:8080/healthz, asserts operations list, 12+7=19 via the proxy, division-by-zero 422 with code, X-Request-ID present, frontend index served; exits non-zero on failure",
+   "Root Makefile: `up`, `down`, `logs`, `smoke`; README Quick start path #1 = compose",
+   ".github/workflows/stack.yml: builds both images (buildx, GHA cache), `docker compose up -d --wait`, runs smoke.sh, dumps logs on failure"
+  ],
+  "out": [
+   "Playwright (H3-04)",
+   "Publishing (H3-07)"
+  ],
+  "notes": [
+   "`--wait` relies on healthchecks; ensure both services define them.",
+   "Keep smoke.sh POSIX sh + curl + jq only."
+  ],
+  "accept": [
+   "Clean machine: `git clone && docker compose up` → app usable at :8080",
+   "`make smoke` green locally and in CI",
+   "Backend not reachable from host unless override applied"
+  ],
+  "tests": [
+   "scripts/smoke.sh in CI"
+  ],
+  "files": [
+   "compose.yaml",
+   "compose.override.example.yaml",
+   "scripts/smoke.sh",
+   "Makefile",
+   ".github/workflows/stack.yml"
+  ],
+  "pr": "build: add compose stack with hardened services, smoke script and CI stack job"
+ },
+ {
+  "id": "H3-04",
+  "title": "End-to-end tests with Playwright against the composed stack",
+  "sprint": 4,
+  "labels": [
+   "testing",
+   "frontend",
+   "sprint-3"
+  ],
+  "est": "M",
+  "depends": [
+   "H3-03",
+   "F2-07"
+  ],
+  "goal": "Prove the real browser + real nginx + real Go service path works, including persistence and error UX.",
+  "scope": [
+   "e2e/ as its own npm package (playwright/test), config with baseURL http://localhost:8080, chromium + mobile Safari emulation project, trace on first retry, HTML report",
+   "Specs: happy path (click + keyboard) 12 + 7 = 19; chained operations; unary sqrt/percent; division by zero shows error and recovers; history persists across reload and recall works; responsive: no horizontal overflow at 320×568; a11y smoke with @axe-core/playwright",
+   "Test-only hook: backend env RATE_LIMIT_RPS raised in compose override for e2e to avoid 429 flakiness; a dedicated spec asserts the 429 toast with a low limit override (optional, mark @slow)",
+   "CI: extend stack.yml (or new e2e.yml) to run Playwright after smoke; upload report + traces as artifacts on failure",
+   "Root Makefile `e2e` target"
+  ],
+  "out": [
+   "Visual regression (follow-up)"
+  ],
+  "notes": [
+   "Select by role/label; never by CSS class. Use `data-ui` only as a last resort."
+  ],
+  "accept": [
+   "All specs green locally and in CI",
+   "Report artifact uploaded on failure",
+   "Total e2e runtime < 3 min in CI"
+  ],
+  "tests": [
+   "e2e/tests/*.spec.ts"
+  ],
+  "files": [
+   "e2e/",
+   ".github/workflows/",
+   "Makefile"
+  ],
+  "pr": "test(e2e): add Playwright suite running against the compose stack in CI"
+ },
+ {
+  "id": "H3-05",
+  "title": "Security and supply chain: CodeQL, Trivy image scan, gitleaks, npm audit, SECURITY.md, pinned actions audit",
+  "sprint": 4,
+  "labels": [
+   "platform",
+   "sprint-3"
+  ],
+  "est": "S",
+  "depends": [
+   "H3-03"
+  ],
+  "goal": "Demonstrate the routine security posture of a production service without turning the repo into a compliance exercise.",
+  "scope": [
+   ".github/workflows/security.yml: CodeQL (go, javascript-typescript) on PR + weekly; Trivy scan of both built images (fail on CRITICAL, ignore unfixed), `npm audit --audit-level=high` (frontend + e2e), govulncheck already in backend.yml (leave)",
+   "gitleaks action on PRs; `.gitleaks.toml` allowlist for fixtures if needed",
+   "SECURITY.md (reporting, supported versions), threat-model paragraph in docs/ARCHITECTURE.md (no auth by design; API is a stateless pure function; abuse controls = rate limit + body size + timeouts)",
+   "Audit all workflows: every `uses:` pinned to a SHA with a version comment; `permissions:` least privilege at workflow level"
+  ],
+  "out": [
+   "SAST beyond CodeQL",
+   "Signing images (cosign) — mention as follow-up"
+  ],
+  "notes": [
+   "Keep scans non-flaky: cache Trivy DB; set timeouts."
+  ],
+  "accept": [
+   "Security workflow green on main",
+   "SECURITY.md present and linked from README",
+   "Dependabot + CodeQL visible under repository Security tab"
+  ],
+  "tests": [
+   "n/a"
+  ],
+  "files": [
+   ".github/workflows/security.yml",
+   "SECURITY.md",
+   "docs/ARCHITECTURE.md"
+  ],
+  "pr": "ci: add CodeQL, Trivy, gitleaks and audit steps; add SECURITY.md"
+ },
+ {
+  "id": "H3-06",
+  "title": "Release pipeline: tag-driven multi-arch images to GHCR, SBOM, release notes",
+  "sprint": 4,
+  "labels": [
+   "platform",
+   "sprint-3"
+  ],
+  "est": "M",
+  "depends": [
+   "H3-03",
+   "H3-05"
+  ],
+  "goal": "A reviewer can `docker compose pull` prebuilt images, and the project has a real release story.",
+  "scope": [
+   ".github/workflows/release.yml on `v*` tags: buildx multi-arch (linux/amd64, linux/arm64) for backend and frontend → ghcr.io/isasumer/go-react-calculator/{backend,frontend}:{version,latest}; OCI labels; provenance/SBOM via `docker/build-push-action` attestations or syft; attach SBOMs to the GitHub Release",
+   "Release notes generated from Conventional Commits (git-cliff config) into CHANGELOG.md; GitHub Release created with the changelog section",
+   "compose.yaml supports `IMAGE_TAG` env to use published images instead of building (documented: `IMAGE_TAG=v1.0.0 docker compose up --no-build`)",
+   "Version injected into backend `/version` and frontend header from the tag"
+  ],
+  "out": [
+   "Deploy to any cloud (out of scope; FU-08 covers k8s manifests)"
+  ],
+  "notes": [
+   "Test with a pre-release tag `v0.9.0-rc.1` before Sprint 4 cuts v1.0.0."
+  ],
+  "accept": [
+   "Pushing a tag produces two multi-arch images on GHCR and a Release with notes and SBOMs",
+   "`IMAGE_TAG=… docker compose up --no-build` works on a clean machine"
+  ],
+  "tests": [
+   "Dry run with rc tag"
+  ],
+  "files": [
+   ".github/workflows/release.yml",
+   "cliff.toml",
+   "compose.yaml",
+   "CHANGELOG.md"
+  ],
+  "pr": "ci: add tag-driven release pipeline publishing multi-arch images and SBOMs to GHCR"
+ },
+ {
+  "id": "D4-01",
+  "title": "README final: quick starts, API reference with curl/httpie examples, design decisions, testing numbers, time log",
+  "sprint": 5,
+  "labels": [
+   "docs",
+   "sprint-4"
+  ],
+  "est": "M",
+  "depends": [
+   "H3-06",
+   "B1-07",
+   "F2-07"
+  ],
+  "goal": "The README is the deliverable most reviewers read first and possibly only; it must answer every question in the assignment brief within two screens and link deeper.",
+  "scope": [
+   "Sections (from the skeleton): badges; one-paragraph overview + screenshot/GIF; architecture diagram (mermaid); Quick start ×3 (compose prebuilt, compose build, local dev with Go + Node); API reference: every endpoint with request/response, `curl` and `httpie` examples copy-pasted from golden fixtures, error catalogue table linking docs/errors.md, link to OpenAPI + Redoc one-liner; Design decisions: 9 ADR one-liners with links, plus 'What the assignment asked vs what I added and why'; Testing: how to run each layer, current coverage numbers (backend per-package table, frontend summary), fuzz/bench/e2e; Project structure tree; Configuration table (env vars); Time log (honest, per sprint); Prompts link; License",
+   "Screenshots: light + dark, mobile + desktop (store under docs/images, optimised)",
+   "Verify every command in README by running it on a fresh clone in a temp dir (record in PR)"
+  ],
+  "out": [
+   "Marketing tone; keep it technical and short"
+  ],
+  "notes": [
+   "Coverage numbers must be copied from CI artifacts of the merge commit, not typed from memory.",
+   "Keep the 'assignment vs added' table brutally honest; it is the single most important paragraph for a senior reviewer."
+  ],
+  "accept": [
+   "Every README command executes successfully on a fresh clone",
+   "All four mandatory README items from the brief are present and findable in the TOC",
+   "Screenshots current"
+  ],
+  "tests": [
+   "Fresh-clone script run (documented in PR body)"
+  ],
+  "files": [
+   "README.md",
+   "docs/images/"
+  ],
+  "pr": "docs: finalise README with quick starts, API reference, design decisions and testing report"
+ },
+ {
+  "id": "D4-02",
+  "title": "PROMPTS.md consolidation and AI-usage reflection",
+  "sprint": 5,
+  "labels": [
+   "docs",
+   "sprint-4"
+  ],
+  "est": "S",
+  "depends": [
+   "D4-01"
+  ],
+  "goal": "Turn the per-session prompt log into the deliverable the brief asks for, showing judgment rather than just usage.",
+  "scope": [
+   "Normalise all session entries in docs/PROMPTS.md: heading per ticket, prompts verbatim, tool used (Claude Code), what was accepted, what was rejected and why, what was written by hand",
+   "Add a short front section: how AI was used (planning, scaffolding, test generation, review), guardrails (every generated line read and run; no generated ADR text accepted without editing), and 2–3 concrete examples where the AI suggestion was wrong and how it was caught",
+   "Link from README 'Prompts' section"
+  ],
+  "out": [
+   "Publishing full transcripts (prompts only, as asked)"
+  ],
+  "notes": [
+   "Nothing fabricated; if a session forgot to log, say so."
+  ],
+  "accept": [
+   "Every merged PR has a corresponding PROMPTS.md section",
+   "Reflection section present and honest"
+  ],
+  "tests": [
+   "n/a"
+  ],
+  "files": [
+   "docs/PROMPTS.md",
+   "README.md"
+  ],
+  "pr": "docs: consolidate prompt log and add AI-usage reflection"
+ },
+ {
+  "id": "D4-03",
+  "title": "ARCHITECTURE.md and ADR index: request lifecycle, middleware order, error taxonomy, frontend state machine diagram",
+  "sprint": 5,
+  "labels": [
+   "docs",
+   "sprint-4"
+  ],
+  "est": "S",
+  "depends": [
+   "B1-07",
+   "F2-07"
+  ],
+  "goal": "A reviewer preparing an interview can understand the system in ten minutes without opening code.",
+  "scope": [
+   "docs/ARCHITECTURE.md: component diagram, backend request lifecycle with middleware order and where each error status originates, error taxonomy table (code → status → origin → client behaviour), frontend data flow (store → effect → mutation → apiFetch), state-machine diagram (mermaid stateDiagram) of calculator phases, storage schema and versioning policy, operational notes (config, probes, metrics, shutdown sequence), threat model paragraph, known limitations",
+   "docs/adr/README.md index with status per ADR; ensure ADR-0001…0009 exist and match the code (fix drift)",
+   "Cross-link from README"
+  ],
+  "out": [
+   "Duplicating README content"
+  ],
+  "notes": [
+   "Diagrams as mermaid so they render on GitHub."
+  ],
+  "accept": [
+   "All 9 ADRs present, status Accepted, consistent with implementation",
+   "ARCHITECTURE.md renders with diagrams on GitHub"
+  ],
+  "tests": [
+   "n/a"
+  ],
+  "files": [
+   "docs/ARCHITECTURE.md",
+   "docs/adr/"
+  ],
+  "pr": "docs: add architecture document and complete the ADR index"
+ },
+ {
+  "id": "D4-04",
+  "title": "Release v1.0.0 and clean-machine verification",
+  "sprint": 5,
+  "labels": [
+   "platform",
+   "sprint-4"
+  ],
+  "est": "S",
+  "depends": [
+   "D4-01",
+   "D4-02",
+   "D4-03"
+  ],
+  "goal": "Cut the version the reviewers will see and prove it works from nothing.",
+  "scope": [
+   "Tag v1.0.0 from main; verify release workflow output (images, SBOMs, notes)",
+   "Clean-machine check (fresh WSL distro or `docker run -v` sandbox / temporary directory with cleared caches): follow README quick start #1 and #3 literally; fix anything that breaks (separate PRs, then re-tag as v1.0.1 if needed)",
+   "Run the full checklist from docs/SUBMISSION_CHECKLIST.md (created here): gofmt/vet/lint clean, coverage artifacts present, no secrets, no TODOs, LICENSE, commit history tidy, repo description/topics set (go, react, typescript, calculator, rest-api, docker)"
+  ],
+  "out": [
+   "Feature changes"
+  ],
+  "notes": [
+   "Repository topics and About link (to the deployed demo if any) are set via `gh repo edit`."
+  ],
+  "accept": [
+   "v1.0.x release exists with images",
+   "Checklist fully ticked in the PR/issue",
+   "Fresh-clone run recorded"
+  ],
+  "tests": [
+   "Checklist"
+  ],
+  "files": [
+   "docs/SUBMISSION_CHECKLIST.md"
+  ],
+  "pr": "chore(release): v1.0.0"
+ },
+ {
+  "id": "D4-05",
+  "title": "Submission package: recruiter email draft, repository link, prompts summary, follow-up issues triaged",
+  "sprint": 5,
+  "labels": [
+   "docs",
+   "sprint-4"
+  ],
+  "est": "S",
+  "depends": [
+   "D4-04"
+  ],
+  "goal": "Hand over cleanly. The email is drafted here and sent by Isa manually.",
+  "scope": [
+   "Draft email (English) with: repo link, one-paragraph summary, how to run in one command, where to find tests/coverage/prompts, honest time note, availability for walkthrough",
+   "Ensure all open issues are either closed or labelled follow-up in the Backlog milestone with a one-line rationale so the open-issue list reads as intentional",
+   "Pin the epic issue and the README in the repo; set the repo's About text",
+   "Record submission in the job-hunt tracker (outside this repo)"
+  ],
+  "out": [
+   "Sending the email (manual)"
+  ],
+  "notes": [
+   "No company name inside the repository; keep it in the email only."
+  ],
+  "accept": [
+   "Email draft reviewed",
+   "Open issues = follow-ups only",
+   "Tracker updated"
+  ],
+  "tests": [
+   "n/a"
+  ],
+  "files": [
+   "(outside repo) job-hunt tracker; docs/SUBMISSION_CHECKLIST.md tick"
+  ],
+  "pr": "n/a (no code change)"
+ },
+ {
+  "id": "FU-01",
+  "title": "Expression evaluation endpoint and UI mode (`POST /api/v1/evaluate` with precedence, shunting-yard)",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Extends the API with an `expression` string, parsed and evaluated server-side; frontend gets an expression-entry mode. Deliberately excluded from v1 (ADR-0008) because the brief asks for basic operations and warns against extra features.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-02",
+  "title": "Decimal arithmetic mode (shopspring/decimal) selectable per request",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "In a money context float64 is unacceptable; add `precision: \"decimal\"` request option backed by decimal arithmetic with scale/rounding rules, and document exactness guarantees. Excluded from v1 per ADR-0003.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-03",
+  "title": "OpenTelemetry tracing + compose `observability` profile (Prometheus, Grafana, Tempo) with a starter dashboard",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Traces across nginx → Go with W3C context; dashboard JSON committed; `docker compose --profile observability up`.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-04",
+  "title": "Server-side calculation history with Postgres and Idempotency-Key",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Persist calculations per anonymous device id; idempotent POST via `Idempotency-Key` header; migrations; history sync in the frontend. Adds state to a deliberately stateless service — only if a product need appears.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-05",
+  "title": "Locale-aware number formatting and language switch",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Intl-based formatting per user locale, decimal comma input, RTL check.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-06",
+  "title": "Offline fallback: local evaluation when the API is unreachable, clearly labelled",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Service worker + local engine; results tagged 'computed locally' — must not silently diverge from the API contract.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-07",
+  "title": "Load test and performance notes (k6 script, p50/p99 at N rps, GOMAXPROCS/limits)",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Document baseline numbers and rate-limit tuning.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-08",
+  "title": "Kubernetes manifests (Kustomize) with probes, HPA, PDB, NetworkPolicy and resource limits",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Turns the compose stack into a deployable k8s app; matches how the service would actually run in production.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-09",
+  "title": "Separate admin listener for /metrics and probes",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Move operational endpoints off the public port to reduce exposure.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-10",
+  "title": "Component style guide page (like a `/dev/ui` route) and visual regression tests",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Living style guide of ui primitives and calculator components; Playwright screenshot comparisons.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ },
+ {
+  "id": "FU-11",
+  "title": "Sign container images with cosign and verify in compose/k8s",
+  "sprint": 6,
+  "labels": [
+   "follow-up"
+  ],
+  "est": "M",
+  "depends": [],
+  "goal": "Supply-chain hardening beyond SBOM.",
+  "scope": [],
+  "out": [],
+  "notes": [],
+  "accept": [],
+  "tests": [],
+  "files": [],
+  "pr": "n/a until scheduled"
+ }
+]

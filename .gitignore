@@ -1,0 +1,36 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Go
+backend/bin/
+backend/coverage.out
+backend/coverage.html
+backend/**/testdata/fuzz/
+*.test
+*.prof
+
+# Node
+node_modules/
+frontend/dist/
+frontend/coverage/
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+npm-debug.log*
+
+# Docker / compose
+compose.override.yaml
+
+# Misc
+*.log
+tmp/
