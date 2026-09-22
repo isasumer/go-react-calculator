@@ -154,6 +154,14 @@ re-plan; if the plan is wrong, the session opens a follow-up issue with the prop
 
 ## 3. Sprints and tickets
 
+> **Consolidation (2026-09-23).** After Sprint 1 and the first half of Sprint 2 shipped, the remaining
+> tickets were merged to cut the number of sessions from 16 to 8 without dropping any v1 deliverable:
+> #11 → #10, #17 → #15, #18 → #16, #20 + #21 → #19, #26 + #27 → #25, #29 → #28; #24 (GHCR release
+> pipeline) moved to the Backlog, so v1.0.0 ships as a git tag + GitHub Release. The absorbed scope is
+> quoted verbatim inside each surviving issue under "Absorbed from". The ticket texts below and
+> `docs/tickets.json` are kept as the original plan; the GitHub issues are authoritative.
+
+
 Sprint goals:
 
 | Sprint | Goal | Exit criterion |
