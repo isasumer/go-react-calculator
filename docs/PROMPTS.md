@@ -965,3 +965,85 @@ reads `false` there, so the "ignores a contenteditable target" test failed until
 the `contenteditable` attribute directly; and a ref write during render (`handlersRef.current =
 handlers`) tripped the `react-hooks/refs` lint rule, so the assignment moved into a no-dependency
 `useEffect`.
+
+## Session H3-01 — 2026-09-23
+
+1. `Implement GitHub issue #19 (H3-01: containers — it absorbed #20 frontend image and #21 compose/smoke/CI …)`, in full:
+
+   ```
+   Implement GitHub issue #19 (H3-01: containers — it absorbed #20 frontend image and #21 compose/smoke/CI; read both "Absorbed from" sections in the issue) in this repository.
+
+   Read first: CLAUDE.md, `gh issue view 19`, docs/PLAN.md §1.1, §1.2 and §1.3 (ADR-0009 row), docs/adr/0000-template.md, backend/Makefile (build target and ldflags), backend/cmd/server/main.go (flags: -version; check whether a healthcheck subcommand exists — it does not yet), backend/README.md Configuration table (env names only), frontend/package.json scripts, frontend/vite.config.ts, frontend/src/config.ts (VITE_API_BASE_URL default), Makefile (root), .github/workflows/backend.yml (pinned action SHAs to reuse). Nothing else.
+
+   Deliverables:
+   1. backend/Dockerfile: multi-stage; builder `golang:1.27-alpine` with `--mount=type=cache` for the module and build caches, `CGO_ENABLED=0 GOFLAGS=-trimpath`, ldflags `-s -w` plus the same -X variables backend/Makefile uses, VERSION/COMMIT/BUILD_DATE as build args; final `gcr.io/distroless/static-debian12:nonroot`, `USER nonroot`, `EXPOSE 8081`, OCI labels, `HEALTHCHECK` using `["/server","-healthcheck"]`. Add that `-healthcheck` flag to cmd/server (backend/cmd/server is allowed for this one file: it GETs http://127.0.0.1:$PORT/readyz with a 2 s timeout and exits 0/1; test it with httptest by making the URL injectable). backend/.dockerignore. Target image < 20 MB; record the actual size.
+   2. frontend/Dockerfile: `node:22-alpine` deps + build stages (npm ci with `--mount=type=cache` for ~/.npm; VITE_APP_VERSION build arg), final `nginxinc/nginx-unprivileged:alpine-slim` listening on 8080, non-root. frontend/nginx/default.conf.template consumed by the image's envsubst with `BACKEND_UPSTREAM` (default `backend:8081`): SPA fallback, `Cache-Control: public, max-age=31536000, immutable` for /assets/, `no-cache` for index.html, gzip on, security headers (nosniff, DENY, Referrer-Policy no-referrer, Permissions-Policy minimal, a CSP that Vite's output satisfies — verify in the browserless way: check `dist/index.html` has no inline scripts), `location /api/ { proxy_pass http://$BACKEND_UPSTREAM; }` forwarding X-Request-ID when present and `$request_id` otherwise, `/healthz` returning 200 text. frontend/.dockerignore.
+   3. compose.yaml at the root: services `backend` (build ./backend, healthcheck via the -healthcheck flag, LOG_FORMAT=json, `read_only: true`, `cap_drop: [ALL]`, `security_opt: [no-new-privileges:true]`, mem_limit/cpus, no host port) and `frontend` (build ./frontend, depends_on backend condition service_healthy, ports "8080:8080", healthcheck curl/wget-free: use nginx's own `/healthz` via a busybox wget if present in the image or a `CMD-SHELL` fallback; verify what the image contains); one named network. compose.override.example.yaml exposing backend on 8081 and enabling text logs, with a comment on how to copy it. Root Makefile: implement `up` (`docker compose up --build --wait`), `down`, `logs`, `smoke`.
+   4. scripts/smoke.sh (POSIX sh + curl + jq): wait up to 60 s for http://localhost:8080/healthz; assert GET /api/v1/operations lists 7 operations; POST 12+7 → 19; POST 1/0 → 422 with code DIVISION_BY_ZERO and content-type application/problem+json; X-Request-ID present on a response; index.html served with 200 and the immutable header on one hashed asset; backend port 8081 NOT reachable from the host (unless override applied). Exit non-zero with a clear line on the first failure.
+   5. .github/workflows/stack.yml: on PR + push main (paths: backend/**, frontend/**, compose.yaml, scripts/**, the workflow); buildx with GHA cache for both images, `docker compose up -d --wait --wait-timeout 120`, run scripts/smoke.sh, on failure dump `docker compose logs`, always `docker compose down -v`. Pin actions to SHAs, least-privilege permissions, concurrency group, a `ci-ok (stack)` job. Do NOT add it to branch protection (orchestrator decides later).
+   6. docs/adr/0009-containers-and-proxy.md from the template (distroless non-root, same-origin /api proxy so no CORS in production, TLS terminated upstream, backend not exposed) and flip its row in docs/adr/README.md to Accepted. README root: fill the "Quick start" section's first path only (`docker compose up --build` then open http://localhost:8080; `make smoke`), leave other headings as they are.
+
+   Verify locally before the PR: `docker compose up --build --wait` then `scripts/smoke.sh` passes; `docker image ls` sizes; `docker inspect` shows non-root user and healthcheck for both. Paste that transcript into the PR body.
+
+   Finish: PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #19; `gh pr create` with the PR title from the issue and `Closes #19`. Do not merge. Report the PR URL.
+   ```
+   [In English; no Turkish original to gloss. It arrived wrapped in orchestration rules — a dedicated git
+   worktree on `platform/19-containers` cut from a fresh `origin/main`, do not touch `frontend/src` or
+   `backend/internal` while a frontend session runs in parallel, never merge, rebase before opening the
+   PR and keep both sides on a PROMPTS.md conflict. Process, not scope; recorded so the commit sequence
+   makes sense.]
+
+**Accepted** — The whole shape of the ticket, and nearly all of its detail. The backend image is a
+`golang:1.27-alpine` builder with the module and build caches mounted and a
+`gcr.io/distroless/static-debian12:nonroot` final stage holding one file, `/server`: 17.4 MB uncompressed,
+5.5 MB to pull, `USER nonroot:nonroot`, OCI labels, and `HEALTHCHECK ["/server","-healthcheck"]`. That
+flag is 40 lines in `cmd/server/healthcheck.go`, split so the URL is a parameter — `healthcheckURL(getenv)`
+builds it, `healthcheck(ctx, url)` performs it — which is what lets the test drive it against `httptest`
+servers returning 200/503/500, a closed listener, a malformed URL and a cancelled context, instead of
+against a container. `cmd/server` coverage is 94.0 %.
+
+The frontend image builds with `node:22-alpine` (npm cache mounted) and serves from
+`nginxinc/nginx-unprivileged:alpine-slim` as uid 101 on 8080, with the config delivered as
+`/etc/nginx/templates/default.conf.template` so the base image's own envsubst entrypoint substitutes
+`${BACKEND_UPSTREAM}` at start. compose gets the hardening the prompt asked for — `read_only: true`,
+`cap_drop: [ALL]`, `no-new-privileges:true`, 256 MB/0.5 CPU on the backend, and no host port for it at
+all — and `scripts/smoke.sh` asserts nine things through the published port only, including that
+`localhost:8081` stays closed. `stack.yml` mirrors backend.yml's `changes` → job → `ci-ok (stack)` shape
+with every action pinned to a SHA.
+
+**Rejected (why)** —
+- `HEALTHCHECK` as a `CMD-SHELL` fallback for the frontend → the alpine base does ship busybox `wget` at
+  `/usr/bin/wget` (checked with `docker run --entrypoint sh … -c 'command -v wget'` before writing the
+  line), so the exec form `["wget","--spider","-q","http://127.0.0.1:8080/healthz"]` is used. `--spider`
+  makes it a probe that exits non-zero on any non-2xx, and the exec form means no shell is spawned every
+  five seconds.
+- One block of `add_header` directives in the `server` block → nginx's `add_header` does not merge across
+  levels: the first `add_header` inside a `location` silently drops every header the parent set. Because
+  `/assets/` and `index.html` each need their own `Cache-Control`, the security headers live in
+  `nginx/security-headers.conf` and are `include`d per location. They are deliberately *not* included in
+  `location /api/`, where the Go service already sets its own — otherwise every one of them would be sent
+  twice.
+- A CSP with a hash or nonce for inline script → unnecessary. `dist/index.html` was read out of the built
+  image and contains exactly one `<script type="module" crossorigin src="/assets/…">` and one stylesheet
+  link, no inline script at all, so `script-src 'self'` holds as-is. `style-src` keeps `'unsafe-inline'`
+  because Radix primitives set `style=""` attributes at runtime and CSP counts those as inline styles;
+  that is stated in ADR-0009 rather than papered over.
+- A literal `ports: ["8080:8080"]` → `"${FRONTEND_PORT:-8080}:8080"`. Default and CI behaviour are
+  identical, but this machine already had a dev server on 8080 and Docker 29 accepted the conflicting
+  binding without an error — the container came up "healthy" with `PortBindings` set and
+  `NetworkSettings.Ports` empty, which is a confusing ten minutes to hand a reviewer. Moving only the
+  host side costs one variable, and `scripts/smoke.sh` already took `BASE_URL`.
+- A workflow-level `paths:` filter on `pull_request` in stack.yml → the repo's own comment in
+  backend.yml explains why that leaves a required check pending forever, so stack.yml reuses the
+  `changes` job instead. It is not added to branch protection (the orchestrator decides that), but it is
+  now shaped so it can be.
+- Building the images twice in CI (bake, then `compose up --build`) → `docker/bake-action` reads
+  `compose.yaml` itself, so CI builds exactly the images compose would, caches each one under its own GHA
+  scope, `load`s them into the daemon, and `compose up` then runs with `--no-build`.
+- The issue's "< 15 MB" target for the backend image → the honest number is 17.4 MB uncompressed, of
+  which 11.9 MB is the binary and 4.2 MB is the distroless base's tzdata. The orchestrator's brief said
+  < 20 MB; the measurement is recorded in the PR rather than the target quietly restated.
+
+**Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green
+(total coverage 98.1 %), the images built and inspected, `docker run --network none` served, and
+`scripts/smoke.sh` passed nine checks against the running stack — the transcript is in the PR body.

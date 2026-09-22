@@ -13,7 +13,26 @@ _Filled in D4-01._ Plan and sprint breakdown: [`docs/PLAN.md`](docs/PLAN.md). Ar
 
 ## Quick start
 
-_Filled in D4-01._ Until then: `make help` lists the umbrella targets.
+### 1. Docker Compose (nothing but Docker required)
+
+```sh
+docker compose up --build            # or: make up
+```
+
+Then open <http://localhost:8080>. nginx serves the app and proxies `/api/` to the Go service over a
+private network, so the API is not published on the host — same shape as production ([ADR-0009](docs/adr/0009-containers-and-proxy.md)).
+
+```sh
+make smoke   # assert the running stack: operations list, 12+7, problem+json, caching headers
+make logs    # follow both services
+make down    # stop and clean up
+```
+
+To poke the API directly, `cp compose.override.example.yaml compose.override.yaml` and bring the stack
+back up; that publishes it on `:8081` and switches the logs to text. If port 8080 is taken on your
+machine, `FRONTEND_PORT=18080 make up` moves the host side only.
+
+_Other paths (local toolchain, dev servers) filled in D4-01._
 
 ## API
 
