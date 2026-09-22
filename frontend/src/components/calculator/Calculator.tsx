@@ -20,6 +20,7 @@ import { useCalculate } from "@/hooks/use-calculate";
 import { useKeyboard } from "@/hooks/use-keyboard";
 import { MAX_ENTRY_DIGITS, type Digit } from "@/lib/calculator-engine";
 import {
+  type Evaluator,
   selectCanRetry,
   selectDisplay,
   selectError,
@@ -29,8 +30,10 @@ import {
   selectPhase,
   useCalculatorStore,
 } from "@/stores/useCalculatorStore";
+import { useHistoryStore } from "@/stores/useHistoryStore";
 
 import { Display } from "./Display";
+import { HistoryPanel } from "./HistoryPanel";
 import { Keypad } from "./Keypad";
 import { OperationsBar } from "./OperationsBar";
 
@@ -41,13 +44,35 @@ const SHAKE_MS = 300;
 export function Calculator() {
   const { mutateAsync } = useCalculate();
   const setEvaluator = useCalculatorStore((state) => state.setEvaluator);
+  const recall = useCalculatorStore((state) => state.recall);
+  const addHistoryEntry = useHistoryStore((state) => state.add);
+
+  /**
+   * The evaluator the store calls for every calculation, wrapped to record a history entry for
+   * every response that comes back successfully (F2-05, #16). This is the one place a
+   * `CalculateResponse` can be observed without teaching `useCalculatorStore` anything about
+   * history: the store only ever sees the resolved value, exactly as before.
+   */
+  const evaluator = useCallback<Evaluator>(
+    async (request) => {
+      const response = await mutateAsync(request);
+      addHistoryEntry({
+        operation: response.operation,
+        a: response.a,
+        b: response.b ?? null,
+        result: response.result,
+      });
+      return response;
+    },
+    [mutateAsync, addHistoryEntry],
+  );
 
   useEffect(() => {
-    setEvaluator(mutateAsync);
+    setEvaluator(evaluator);
     return () => {
       setEvaluator(null);
     };
-  }, [setEvaluator, mutateAsync]);
+  }, [setEvaluator, evaluator]);
 
   const expression = useCalculatorStore(selectExpression);
   const value = useCalculatorStore(selectDisplay);
@@ -145,50 +170,55 @@ export function Calculator() {
   });
 
   return (
-    <section
-      data-ui="calculator"
-      aria-label="Calculator"
-      className={
-        // Portrait: one column, display on top. On a phone held sideways there is no room for a
-        // display *and* five rows of keys, so the two sit next to each other instead and the
-        // display stays on screen rather than scrolling away above the pad.
-        "flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-border " +
-        "bg-surface-raised p-3 shadow-sm " +
-        "landscape-short:grid landscape-short:max-w-2xl landscape-short:grid-cols-2 " +
-        "landscape-short:items-start"
-      }
-    >
-      <div className="flex flex-col gap-3">
-        <Display
-          expression={expression}
-          value={value}
-          error={error}
+    // Mobile/portrait: the history panel stacks below the card. From `sm:` (40rem) up there is
+    // room for it to sit beside the card as its own column instead.
+    <div className="flex w-full max-w-sm flex-col items-stretch gap-3 sm:max-w-none sm:flex-row sm:items-start sm:justify-center">
+      <section
+        data-ui="calculator"
+        aria-label="Calculator"
+        className={
+          // Portrait: one column, display on top. On a phone held sideways there is no room for a
+          // display *and* five rows of keys, so the two sit next to each other instead and the
+          // display stays on screen rather than scrolling away above the pad.
+          "flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-border " +
+          "bg-surface-raised p-3 shadow-sm " +
+          "landscape-short:grid landscape-short:max-w-2xl landscape-short:grid-cols-2 " +
+          "landscape-short:items-start"
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Display
+            expression={expression}
+            value={value}
+            error={error}
+            busy={busy}
+            entering={entering}
+            errorRequestId={errorRequestId}
+            canRetry={canRetry}
+            onRetry={retry}
+            shake={shake}
+          />
+          <OperationsBar
+            busy={busy}
+            onUnary={applyUnary}
+            onOperator={setOperator}
+            pressedShortcut={pressedShortcut}
+          />
+        </div>
+        <Keypad
           busy={busy}
-          entering={entering}
-          errorRequestId={errorRequestId}
-          canRetry={canRetry}
-          onRetry={retry}
-          shake={shake}
-        />
-        <OperationsBar
-          busy={busy}
-          onUnary={applyUnary}
+          onDigit={guardedInputDigit}
+          onDecimal={guardedInputDecimal}
+          onToggleSign={toggleSign}
+          onBackspace={backspace}
+          onClearEntry={clearEntry}
+          onClearAll={clearAll}
           onOperator={setOperator}
+          onEquals={evaluate}
           pressedShortcut={pressedShortcut}
         />
-      </div>
-      <Keypad
-        busy={busy}
-        onDigit={guardedInputDigit}
-        onDecimal={guardedInputDecimal}
-        onToggleSign={toggleSign}
-        onBackspace={backspace}
-        onClearEntry={clearEntry}
-        onClearAll={clearAll}
-        onOperator={setOperator}
-        onEquals={evaluate}
-        pressedShortcut={pressedShortcut}
-      />
-    </section>
+      </section>
+      <HistoryPanel onRecall={recall} />
+    </div>
   );
 }

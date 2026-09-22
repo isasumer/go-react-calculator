@@ -54,6 +54,12 @@ export interface CalculatorStore {
   /** Re-sends the request that produced the current error. A no-op when `canRetry` is false or a
    *  request is already in flight. */
   retry: () => void;
+  /**
+   * Recalls a history entry's value (F2-05, #16): starts a fresh entry with `value` already typed,
+   * exactly as if the user had keyed in its digits. A no-op while a calculation is in flight, same
+   * as every other key except `AC`.
+   */
+  recall: (value: number) => void;
 }
 
 export const useCalculatorStore = create<CalculatorStore>()((set, get) => {
@@ -176,6 +182,17 @@ export const useCalculatorStore = create<CalculatorStore>()((set, get) => {
         return;
       }
       send(get().calc, lastSentRequest);
+    },
+    recall: (value) => {
+      if (get().pending) {
+        return;
+      }
+      const calc: engine.CalcState = {
+        ...engine.initialState,
+        phase: "enteringA",
+        display: String(value),
+      };
+      set({ calc, errorRequestId: null, canRetry: false });
     },
   };
 });

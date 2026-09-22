@@ -282,6 +282,38 @@ describe("useCalculatorStore", () => {
     });
   });
 
+  describe("recall (F2-05, #16)", () => {
+    it("starts a fresh entry with the recalled value already typed", () => {
+      store().inputDigit("9");
+      store().setOperator("add");
+
+      store().recall(42);
+
+      expect(selectPhase(store())).toBe("enteringA");
+      expect(selectDisplay(store())).toBe("42");
+      expect(selectExpression(store())).toBe("");
+      expect(selectError(store())).toBeNull();
+    });
+
+    it("is a no-op while a request is in flight", async () => {
+      const pending = deferred<CalculateResponse>();
+      store().setEvaluator(() => pending.promise);
+      store().inputDigit("1");
+      store().setOperator("add");
+      store().inputDigit("1");
+      store().evaluate();
+
+      expect(selectIsBusy(store())).toBe(true);
+      store().recall(99);
+      expect(selectDisplay(store())).toBe("1");
+
+      pending.resolve({ operation: "add", a: 1, b: 1, result: 2 });
+      await vi.waitFor(() => {
+        expect(selectIsBusy(store())).toBe(false);
+      });
+    });
+  });
+
   describe("selectors", () => {
     it("report an idle store", () => {
       expect(selectDisplay(store())).toBe("0");

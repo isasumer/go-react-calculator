@@ -69,3 +69,69 @@ src/
 - **Imports** use the `@/` alias (`@/lib/utils`) rather than relative `../../` paths.
 - **Styling** uses the tokens in `app/globals.css` (`bg-surface`, `text-danger`, `bg-key-operator`, …);
   dark mode follows `prefers-color-scheme` automatically, so avoid hard-coded colours.
+
+## Testing
+
+Four layers, from the bottom up:
+
+1. **Engine unit tests** (`lib/calculator-engine.test.ts`, `lib/format-number.test.ts`, …) — pure
+   functions in, pure data out, no DOM and no network.
+2. **Hook tests** (`hooks/*.test.ts`) — `renderHook` from Testing Library, exercising a hook's
+   contract in isolation from any component that happens to use it.
+3. **Component tests** (`components/**/*.test.tsx`) — rendered with Testing Library and
+   `renderWithProviders` (`src/test/utils.tsx`), querying by role/label rather than by class or
+   test id. Anything that talks to the API is intercepted with MSW (`src/test/msw`); a request with
+   no matching handler fails the test (`onUnhandledRequest: "error"` in `src/test/setup.ts`) rather
+   than silently hitting the network or hanging.
+4. **End-to-end** — pending [#22](../../../issues/22); not part of this suite yet.
+
+### Running
+
+```bash
+npm run test              # single run
+npm run test -- --watch   # watch mode
+npm run test:coverage     # single run with the v8 coverage gate (make -C frontend test)
+```
+
+`make -C frontend check` runs format-check → lint → type-check → test, the same sequence CI runs on
+every PR.
+
+### Adding an MSW handler override
+
+The default handlers live in `src/test/msw/handlers.ts` and are installed for the whole suite by
+`src/test/msw/server.ts`. A single test that needs different behaviour (an error response, a
+delayed response, a specific payload) overrides just that request with `server.use(...)` — the
+default handler for everything else stays in effect, and `server.resetHandlers()` (in
+`src/test/setup.ts`'s `afterEach`) puts the defaults back before the next test:
+
+```ts
+import { http, HttpResponse } from "msw";
+
+import { apiUrl } from "@/lib/api";
+import { CALCULATE_ENDPOINT } from "@/lib/query-config";
+import { server } from "@/test/msw/server";
+
+server.use(
+  http.post(apiUrl(CALCULATE_ENDPOINT), () =>
+    HttpResponse.json({ code: "DIVISION_BY_ZERO" }, { status: 422 }),
+  ),
+);
+```
+
+### Coverage
+
+`vitest.config.ts` sets v8 coverage thresholds — lines 85%, statements 85%, functions 85%, branches
+80% — over `src/**/*.{ts,tsx}`, excluding tests, `src/test/**`, `src/main.tsx` and the vendored
+`components/ui/**` primitives. `npm run test:coverage` fails the run if any threshold is missed;
+CI runs the same command and additionally posts a per-file table to the job's step summary from
+`coverage/coverage-summary.json` (the `json-summary` reporter), and uploads `coverage/lcov.info` as
+a build artifact.
+
+### Storage keys and versioning
+
+Anything persisted to `localStorage` goes through `src/lib/storage.ts` (`storageKey`, `readJSON`,
+`writeJSON`, `migrateKeys`), never `localStorage` directly. A key is `calc.<name>.v<version>`
+(e.g. `calc.history.v1`); every read is validated against a zod schema, and anything missing,
+unparsable, or schema-invalid is treated as absent rather than crashing the app. When a persisted
+shape changes, bump `version` for that key and call `migrateKeys(prefix, currentKey)` once at
+hydration so the old version's key is removed instead of lingering unread forever.

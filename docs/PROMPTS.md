@@ -1047,3 +1047,86 @@ with every action pinned to a SHA.
 **Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green
 (total coverage 98.1 %), the images built and inspected, `docker run --network none` served, and
 `scripts/smoke.sh` passed nine checks against the running stack — the transcript is in the PR body.
+
+## Session F2-05 — 2026-09-23
+
+1. Implement GitHub issue #16 (F2-05: history with localStorage; it absorbed #18 coverage thresholds + testing docs — read the "Absorbed from #18" section in the issue) in this repository.
+
+   Read first: CLAUDE.md, `gh issue view 16`, frontend/README.md, frontend/vitest.config.ts, frontend/src/test/setup.ts, frontend/src/components/calculator/Calculator.tsx, frontend/src/stores/useCalculatorStore.ts (exports and where a successful CalculateResponse is applied), frontend/src/lib/format-number.ts (exports only), frontend/src/types/calculator.ts (exports only), .github/workflows/frontend.yml (the test job). Nothing else.
+
+   Part A — storage helper and history store:
+   - src/lib/storage.ts: `storageKey(name, version)` → `calc.<name>.v<version>`; `readJSON(key, schema)` returns the zod-parsed value or null (missing, malformed JSON, schema mismatch → null plus a single console.warn per key); `writeJSON(key, value)`; `removeKey(key)`; every localStorage access wrapped in try/catch and safe when `window`/`localStorage` is undefined; `migrateKeys(prefix, currentKey)` removes stale `calc.history.v*` keys other than the current one.
+   - src/stores/useHistoryStore.ts: entries `{ id: string; operation; a; b: number | null; result; at: ISO string }`, max 50 (drop oldest); actions `add(entry)`, `remove(id)`, `clear()`; hydrated once from `calc.history.v1` via readJSON with a zod schema; persisted after every change through a `subscribe` (hand-rolled, not zustand/persist — the reference codebase keeps storage schemas explicit); `id` from `crypto.randomUUID()` with a fallback.
+   - Wiring: in the store layer or Calculator, on every successful CalculateResponse push a history entry (operation, a, b, result). Choose the place that keeps useCalculatorStore free of history knowledge if practical (e.g. Calculator subscribes to results) and say why in the PR.
+
+   Part B — HistoryPanel UI:
+   - src/components/calculator/HistoryPanel.tsx: `data-ui="calculator.history"`; a collapsible section (native `<details>` with `<summary>History (n)</summary>`, open state remembered in localStorage key `calc.history-open.v1`), list of rows newest first rendered as buttons `a op b = result` (formatted with formatResult; raw values in `title`), clicking a row recalls the result into the display as `a` (add a `recall(value)` action to useCalculatorStore that sets phase `enteringA` with display = String(value), or reuse an existing transition if one fits), a per-row remove button with `aria-label`, and a "Clear history" button that asks for confirmation via a two-step click (first click turns into "Confirm clear", second clears, escape/blur cancels) — no window.confirm. Mobile: panel below the keypad; ≥ 40rem width: side column. Reuse existing theme tokens.
+   - Calculator renders HistoryPanel and passes the recall callback.
+
+   Part C — thresholds and docs (absorbed #18):
+   - vitest.config.ts coverage thresholds: lines 85, functions 85, branches 80, statements 85; reporters text, lcov, json-summary. If the summary table is not yet posted to $GITHUB_STEP_SUMMARY in .github/workflows/frontend.yml, add a small step that reads coverage/coverage-summary.json with node or jq and appends a markdown table; keep actions pinned.
+   - frontend/README.md "Testing" section: the layers (engine unit → hooks → components with MSW → e2e, the last one pending #22), how to run and watch, how to add an MSW handler override, how coverage is enforced, the storage key/versioning policy in one paragraph.
+
+   Tests: storage.test.ts (round-trip, malformed JSON, schema mismatch, quota/throwing localStorage mock, no-window path, migrateKeys); useHistoryStore.test.ts (hydration from a pre-seeded localStorage, persistence on add/remove/clear, max 50 FIFO, corrupted storage does not throw); HistoryPanel.test.tsx (rows newest first, recall via user-event puts the value in the display, remove, two-step clear, open state persisted); Calculator.test.tsx addition: after "12 + 7 =" a history row exists and survives a re-mount with the same mocked localStorage. Keep 100 % lines on new files.
+
+   Finish: `make -C frontend check` and `npm run test:coverage` outputs in the PR body; PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #16; `gh pr create` with the PR title from the issue and `Closes #16`. Do not merge. Report the PR URL.
+
+**Accepted** — `src/lib/storage.ts` as the single place every localStorage access goes through
+(`storageKey`, `readJSON`, `writeJSON`, `removeKey`, `migrateKeys`), all wrapped in try/catch and
+`null`/no-op-safe with no `window`. `useHistoryStore` hand-rolled (no `zustand/persist`): hydrates
+once at module load from `readJSON`, persists via a plain `useHistoryStore.subscribe` after every
+change, `id` from `crypto.randomUUID()` with a `Date.now()+Math.random()` fallback, newest-first
+list capped at 50 by slicing after unshift. The evaluator passed to `useCalculatorStore.setEvaluator`
+is wrapped in `Calculator` (`mutateAsync` → record a history entry from the resolved
+`CalculateResponse` → return it) instead of teaching the calculator store about history — the store
+still only ever sees the resolved value, exactly as before this ticket, and every existing
+`useCalculatorStore` test kept passing unchanged. A `recall(value)` action was added to
+`useCalculatorStore` (phase `enteringA`, `display: String(value)`, guarded by `pending` like every
+other key but `AC`). `HistoryPanel` is a native `<details>`/`<summary>` (no drawer library), a
+two-step "Clear history" → "Confirm clear" button (`Escape`/blur cancels, no `window.confirm`), and
+reuses `storage.ts` (`readJSON`/`writeJSON` with a `z.boolean()` schema) for the
+`calc.history-open.v1` open-state key rather than duplicating localStorage try/catch logic in the
+component. `vitest.config.ts`'s thresholds already matched the ticket (lines/statements/functions
+85, branches 80); only the reporter list changed to `text, lcov, json-summary` per the ticket's
+exact wording. The CI step summary table and lcov artifact upload already existed in
+`.github/workflows/frontend.yml` from an earlier session, so Part C's CI work was already done;
+nothing there needed changing beyond the reporter list. Added a "Testing" section to
+`frontend/README.md` (layers, running/watching, an MSW `server.use` override example, the coverage
+gate, and the storage key/versioning paragraph).
+
+**Rejected (why)**
+- `vaul`/any drawer library for the mobile history sheet → the orchestration rule explicitly said no
+  new npm dependencies; a `<details>` panel that stacks below the keypad on narrow viewports and
+  becomes a `sm:` side column on wide ones meets the same requirement with zero new code to audit.
+- `zustand/persist` middleware for `useHistoryStore` → the ticket asked for a hand-rolled
+  `subscribe`, matching the reference codebase's convention of keeping the storage key and schema
+  explicit in `storage.ts` rather than hidden inside a persistence wrapper.
+- `window.confirm` for clearing history → explicitly ruled out; a two-step button (own local state,
+  cancelled by blur or Escape) keeps the interaction inside the existing UI instead of a native
+  dialog no test can drive through Testing Library's role queries as naturally.
+- Growing `App.tsx`'s `<main>` past `max-w-sm` was not in the ticket's "read first" list, but the
+  ≥40rem side-column layout for `HistoryPanel` cannot show up at all while its ancestor is capped
+  narrower than that breakpoint — `main`'s wrapper class became `max-w-sm sm:max-w-3xl
+  landscape-short:max-w-2xl`, the smallest change that lets the side column actually appear, called
+  out here rather than silently expanding scope.
+- Reading history rows by `formatResult`'s raw numbers directly for the accessible name (e.g. an
+  `aria-label` separate from the button's text) → the row's own visible text (`"12 + 7 = 19"`) is
+  already a sufficient accessible name, so `title` alone carries the unrounded raw values without
+  a second parallel label to keep in sync.
+
+**Written by hand** — None; the plan and every file were generated, then corrected against real
+tool output. Three things were generated wrong and fixed after reading the failure: (1) `recall`'s
+inline object literal in `useCalculatorStore.ts` tripped
+`@typescript-eslint/no-unsafe-assignment` until it was pulled into an explicitly-typed
+`const calc: engine.CalcState` first; (2) `useHistoryStore.test.ts`'s dynamic
+`Promise<typeof import("@/stores/useHistoryStore")>` return type tripped
+`@typescript-eslint/consistent-type-imports`, fixed with a top-level `import type * as HistoryModule`
+and `Promise<typeof HistoryModule>` instead; (3) the "no crypto.randomUUID" test first tried
+`globalThis.crypto = undefined`, which throws in this jsdom (`crypto` is an accessor-only global) —
+fixed with `Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true })`
+and the same pattern to restore it. The first coverage run also showed `useCalculatorStore.recall`,
+one `storage.ts` catch branch, and `useHistoryStore`'s non-crypto id fallback completely untested;
+tests were added for each (recall while idle and while pending; `migrateKeys` when `storage.key`
+itself throws; `add` with `crypto` undefined) to bring new/changed code to 100 % lines, matching
+what `npm run test:coverage` reported at the end (100 % statements/functions/lines, 98.6 % branches
+overall — see the PR body for the full table).
