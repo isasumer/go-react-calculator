@@ -42,6 +42,8 @@ _Filled in D4-01._ Contract: [`docs/PLAN.md` §1.4](docs/PLAN.md#14-api-contract
 
 _Filled in D4-01._ Decisions are recorded as ADRs: [`docs/adr/`](docs/adr/README.md) — [ADR-0001 monorepo layout](docs/adr/0001-monorepo-layout.md), [ADR-0002 frontend stack](docs/adr/0002-frontend-stack.md).
 
+Security policy, supported versions, and how to report a vulnerability: [`SECURITY.md`](SECURITY.md).
+
 ## Testing
 
 _Filled in B1-07 / F2-07 / D4-01._

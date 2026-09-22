@@ -1,0 +1,191 @@
+# Security and supply-chain CI: CodeQL, Trivy image scan, gitleaks, npm audit.
+#
+# govulncheck already runs in backend.yml (vuln job) and is not duplicated here.
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly CodeQL sweep, independent of any push/PR activity.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  codeql:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, javascript-typescript]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          languages: ${{ matrix.language }}
+
+      # Go and JS/TS both build cleanly with the autobuild step; no matrix-specific
+      # build command is needed (Go: `go build ./...` via backend/go.mod, JS/TS:
+      # no compile step required for analysis).
+      - uses: github/codeql-action/autobuild@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+
+      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  trivy:
+    name: trivy (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: ./backend
+          - image: frontend
+            context: ./frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Cache Trivy DB
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+
+      # Same build args as compose.yaml / stack.yml, so the scanned image matches
+      # what `docker compose up --build` produces.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          load: true
+          tags: go-react-calculator-${{ matrix.image }}:scan
+          build-args: |
+            VERSION=dev
+            COMMIT=none
+            BUILD_DATE=unknown
+          cache-from: type=gha,scope=security-${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=security-${{ matrix.image }}
+
+      # Full report (CRITICAL + HIGH), non-blocking, uploaded to code scanning so
+      # HIGH findings are visible without failing the build.
+      - name: Trivy scan (report, SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        with:
+          image-ref: go-react-calculator-${{ matrix.image }}:scan
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        if: ${{ !cancelled() }}
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}
+
+      # Blocking gate: only CRITICAL (with a fix available) fails the job. HIGH is
+      # reported above but does not block, since the fleet already carries known,
+      # unfixed HIGH findings in base images that are tracked as follow-ups rather
+      # than build breakers.
+      - name: Trivy scan (blocking, CRITICAL only)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        with:
+          image-ref: go-react-calculator-${{ matrix.image }}:scan
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  gitleaks:
+    name: gitleaks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  npm-audit:
+    name: npm-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Production dependency audit (blocking)
+        working-directory: frontend
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: Full dependency audit, including dev (report only)
+        if: ${{ !cancelled() }}
+        working-directory: frontend
+        run: npm audit --audit-level=high || echo "::warning::npm audit found high/critical issues in dev dependencies (report-only, not blocking)"
+
+  ci-ok:
+    # Single required status check for branch protection. Skipped jobs pass; failed or cancelled jobs fail.
+    # Not added to branch protection here; the orchestrator decides when to require it.
+    name: ci-ok (security)
+    needs: [codeql, trivy, gitleaks, npm-audit]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needs results: $RESULTS"
+          if [[ " $RESULTS " == *" failure "* || " $RESULTS " == *" cancelled "* ]]; then
+            exit 1
+          fi

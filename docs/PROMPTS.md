@@ -1130,3 +1130,73 @@ tests were added for each (recall while idle and while pending; `migrateKeys` wh
 itself throws; `add` with `crypto` undefined) to bring new/changed code to 100 % lines, matching
 what `npm run test:coverage` reported at the end (100 % statements/functions/lines, 98.6 % branches
 overall — see the PR body for the full table).
+
+## Session H3-05 — 2026-09-23
+
+Prompt (verbatim, from the orchestrator):
+
+> Implement GitHub issue #23 (H3-05: security and supply chain) in this repository, in its slimmed form: CodeQL, Trivy image scan, gitleaks, npm audit, SECURITY.md, pinned-actions audit.
+>
+> Read first: CLAUDE.md, `gh issue view 23`, .github/workflows/{backend,frontend,stack}.yml (reuse their pinned SHAs, `changes` gate pattern, permissions and concurrency style), .github/dependabot.yml, docs/ARCHITECTURE.md (stub; you add one paragraph), README.md headings only. Nothing else.
+>
+> Deliverables:
+> 1. .github/workflows/security.yml with jobs:
+>    - `codeql`: github/codeql-action init/autobuild-or-manual/analyze for languages `go` and `javascript-typescript`; on pull_request, push to main and a weekly cron; `security-events: write` only in this job.
+>    - `trivy`: build both images with buildx (GHA cache, same build args as stack.yml) and scan each with aquasecurity/trivy-action: `severity: CRITICAL,HIGH`, `ignore-unfixed: true`, `exit-code: 1` for CRITICAL only (HIGH reported, not blocking — say so in a comment), SARIF uploaded to code scanning. Cache the Trivy DB.
+>    - `gitleaks`: gitleaks/gitleaks-action on PRs with full history fetch; add `.gitleaks.toml` only if a false positive appears (test fixtures with fake request ids etc.); otherwise do not add one.
+>    - `npm-audit`: `npm audit --audit-level=high --omit=dev` and a second non-blocking `npm audit --audit-level=high` including dev deps (report only) in frontend/. (govulncheck already runs in backend.yml: do not duplicate.)
+>    - A final `ci-ok (security)` job needing all of the above. Do not add it to branch protection (orchestrator decides).
+>    All `uses:` pinned to full commit SHAs with `# vX.Y.Z` comments; top-level `permissions: contents: read`; concurrency group; timeouts.
+> 2. Audit the existing workflows: every `uses:` must be a full SHA with a version comment; every workflow must have top-level least-privilege permissions. Fix any that are not (minimal diffs), and list what you changed in the PR body.
+> 3. SECURITY.md at the root: supported versions (main + latest tag), how to report (GitHub private vulnerability reporting), what is in scope, the abuse controls the service already has (rate limit, body limit, timeouts, no auth by design). Link it from the README under "Design decisions" as a single line without restructuring headings.
+> 4. docs/ARCHITECTURE.md: add a "Threat model" paragraph (stateless pure-function API, no PII, no auth; abuse controls; what a deployment must add: TLS at the ingress, WAF/rate limiting at the edge, secrets none). Keep the rest of the stub intact.
+> 5. Verify the workflow actually runs green on the PR (push, wait, fix). If Trivy finds a CRITICAL in a base image, do not silence it: report it in the PR body with the CVE and open a follow-up; if the base image has a newer tag that fixes it, say so but do not change Dockerfiles here.
+>
+> Finish: PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #23; `gh pr create` with the PR title from the issue and `Closes #23`. Do not merge. Report the PR URL.
+
+**Accepted**
+- CodeQL as a `go` × `javascript-typescript` matrix, one `init`/`autobuild`/`analyze` sequence per
+  language, `security-events: write` scoped to that job only.
+- Trivy run twice per image: once report-only (`CRITICAL,HIGH`, `exit-code 0`, SARIF uploaded to code
+  scanning) and once blocking (`CRITICAL` only, `exit-code 1`), both `ignore-unfixed: true`, both reading
+  from a cached Trivy DB directory (`actions/cache`, keyed on `github.run_id` with a `restore-keys`
+  prefix so a later run in the same day can reuse yesterday's DB while still refreshing).
+- Both images built with `docker/build-push-action` (`load: true`) using the same `VERSION`/`COMMIT`/
+  `BUILD_DATE` build args as `compose.yaml`/`stack.yml`, each with its own GHA cache scope
+  (`security-<image>`) so it doesn't collide with `stack.yml`'s `stack-<image>` scope.
+- gitleaks gated to `pull_request` only, full-history checkout (`fetch-depth: 0`); no `.gitleaks.toml`
+  added — no false positive appeared against this repo's fixtures.
+- npm-audit as its own job: a blocking `--omit=dev --audit-level=high` step, then a second, always-run,
+  non-blocking full-tree audit that reports via `::warning::` instead of failing the job.
+- `ci-ok (security)` needs all four jobs; not wired into branch protection (left to the orchestrator, per
+  the prompt).
+- `security-events: write` granted to the `trivy` job as well as `codeql`, not "only" `codeql` as the
+  prompt's phrasing suggested literally — `github/codeql-action/upload-sarif` (used to publish Trivy's
+  SARIF to code scanning) requires that permission in whichever job calls it. Read as "each job declares
+  only the permissions it needs" rather than "no other job may ever have this one," since a code-scanning
+  upload cannot function without it.
+- Existing workflows audited (`backend.yml`, `frontend.yml`, `stack.yml`): every `uses:` was already a
+  full commit SHA with a `# vX.Y.Z` comment, and every workflow already declared top-level
+  `permissions: contents: read` with least-privilege job-level additions (e.g. `changes: pull-requests:
+  read`). No changes were needed; this is recorded rather than silently skipped.
+- SECURITY.md written from the issue's own bullet list (supported versions, GitHub private vulnerability
+  reporting, in-scope surface, existing abuse controls) plus a short "supply-chain scanning" section
+  listing what already runs, so the policy doesn't read as aspirational.
+- README gets exactly one new line under "Design decisions" linking `SECURITY.md`; no heading
+  restructuring.
+- ARCHITECTURE.md's stub gains a "Threat model" paragraph in the requested shape and drops "Threat model
+  and known limitations" from the "Sections to be written" list, since that line item is now written;
+  every other stub line is untouched.
+
+**Rejected**
+- A single Trivy invocation with severity `CRITICAL,HIGH` and `exit-code 1` → this would block on HIGH
+  too, which the prompt explicitly says must be reported but not blocking. Split into a report step and a
+  blocking step instead.
+- Adding `.gitleaks.toml` pre-emptively "just in case" → the prompt is explicit that it's added only on an
+  actual false positive; none appeared, so it was left out.
+- Folding npm-audit into the existing `frontend.yml` `check` job → keeps `security.yml` self-contained and
+  matches the ticket's Files/areas list, which does not include `frontend.yml`.
+
+**Written by hand** — None; every line was generated and then read before being committed. Action SHAs
+were resolved by hand via `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` for each pinned action rather
+than trusted from memory.
