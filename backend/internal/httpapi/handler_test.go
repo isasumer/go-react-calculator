@@ -27,8 +27,10 @@ const exampleRequestID = "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
 const jsonCT = "application/json"
 
 // serve runs one request through Routes with an X-Request-ID already set on
-// the response, as the middleware chain will do.
-func serve(t *testing.T, method, path, contentType string, body io.Reader) *httptest.ResponseRecorder {
+// the response, as the middleware chain will do. It returns the request as
+// well, because every assertion about a response needs the request that
+// produced it to find the operation the contract describes.
+func serve(t *testing.T, method, path, contentType string, body io.Reader) (*http.Request, *httptest.ResponseRecorder) {
 	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), method, path, body)
 	if contentType != "" {
@@ -37,7 +39,7 @@ func serve(t *testing.T, method, path, contentType string, body io.Reader) *http
 	rec := httptest.NewRecorder()
 	rec.Header().Set("X-Request-ID", exampleRequestID)
 	NewHandler(calc.NewRegistry(), nil).Routes().ServeHTTP(rec, req)
-	return rec
+	return req, rec
 }
 
 // assertGolden compares the indented JSON body with testdata/<name>.json.
@@ -268,7 +270,7 @@ func TestRoutes(t *testing.T) {
 				body = strings.NewReader(tt.body)
 			}
 
-			rec := serve(t, method, path, ct, body)
+			req, rec := serve(t, method, path, ct, body)
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body: %s", rec.Code, tt.wantStatus, rec.Body)
@@ -279,6 +281,10 @@ func TestRoutes(t *testing.T) {
 			if got, want := rec.Header().Get("Content-Length"), strconv.Itoa(rec.Body.Len()); got != want {
 				t.Errorf("Content-Length = %s, want %s", got, want)
 			}
+
+			// Every row is also a contract test: the response has to be one
+			// backend/api/openapi.yaml describes, for this path and status.
+			assertMatchesSpec(t, req, rec.Result())
 
 			if tt.golden == "" {
 				if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
