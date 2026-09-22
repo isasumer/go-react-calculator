@@ -1,0 +1,17 @@
+# Spectral ruleset for the API contract. CI lints backend/api/openapi.yaml
+# with it inside the backend workflow's lint job; spectral finds this file by
+# name from the repository root.
+#
+# spectral:oas is the whole ruleset. Its errors fail the job (spectral's
+# default --fail-severity), its style warnings are printed and do not, which
+# is the split we want: a document that does not parse or contradicts OpenAPI
+# stops the build, a missing `contact` does not.
+extends: ["spectral:oas"]
+
+rules:
+  # `404 NOT_FOUND` and `405 METHOD_NOT_ALLOWED` are produced by the router,
+  # below any operation, so listing them under a path would claim an operation
+  # can answer something it never answers. They live in components/responses,
+  # documented from `info.description`, and the contract tests validate real
+  # responses against them — spectral only cannot see a `$ref` to them.
+  oas3-unused-component: off

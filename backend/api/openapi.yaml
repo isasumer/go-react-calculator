@@ -1,0 +1,920 @@
+# The machine-readable contract for the calculator API (docs/PLAN.md §1.4,
+# frozen: a change here needs an ADR). It is embedded in the binary and served
+# at GET /api/v1/openapi.yaml, and backend/internal/httpapi/openapi_test.go
+# validates every response the handler tests produce against it, so a drift
+# between this file and the implementation fails the build rather than the
+# client.
+#
+# The error examples are the golden files in internal/httpapi/testdata,
+# byte for byte; TestContractExamplesMatchGoldenFiles enforces it.
+openapi: 3.1.0
+
+info:
+  title: Calculator API
+  version: 1.0.0
+  description: |
+    A small HTTP calculator: one endpoint evaluates an arithmetic operation on
+    one or two operands, one lists the operations the server supports, and the
+    operational endpoints outside `/api/v1` serve the platform rather than API
+    clients.
+
+    Every error is an RFC 9457 `application/problem+json` document carrying a
+    stable `code`. Clients branch on `code`, never on `title` or `detail`:
+    those are for humans and may be reworded. The full catalogue, with the
+    client behaviour each code calls for, is in
+    [docs/errors.md](https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md),
+    and each problem's `type` is the URL of its section on that page.
+
+    Two answers are produced by the router rather than by an operation, so
+    they are described once in `components/responses` instead of being
+    repeated under every path: `404 NOT_FOUND` for a path this document does
+    not describe, and `405 METHOD_NOT_ALLOWED`, with an `Allow` header, for a
+    method this document does not describe on a path it does.
+  contact:
+    name: go-react-calculator
+    url: https://github.com/isasumer/go-react-calculator
+  license:
+    name: MIT
+    url: https://github.com/isasumer/go-react-calculator/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8081
+    description: The server as `make -C backend run` starts it (PORT, default 8081).
+  - url: /
+    description: Behind the ingress, on the same origin as the web app.
+
+tags:
+  - name: calculator
+    description: Arithmetic. The only part of the API a client needs.
+  - name: contract
+    description: This document, served by the process that implements it.
+  - name: operational
+    description: Probes and telemetry for the platform. Never rate limited.
+
+paths:
+  /api/v1/calculate:
+    post:
+      operationId: calculate
+      tags: [calculator]
+      summary: Evaluate one operation
+      description: |
+        Applies `operation` to `a` (and to `b` for an operation whose arity is
+        2) and echoes the request with the result. The service holds no state:
+        the same request always produces the same answer, so a retry is always
+        safe.
+
+        A request that is well formed but cannot be evaluated — dividing by
+        zero, the square root of a negative number, an overflow — is a `422`,
+        not a `400`: the client sent a valid request, the arithmetic is what
+        has no answer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalculateRequest'
+            examples:
+              binary:
+                summary: 10 ÷ 4
+                value:
+                  operation: divide
+                  a: 10
+                  b: 4
+              unary:
+                summary: √16
+                value:
+                  operation: sqrt
+                  a: 16
+              percent:
+                summary: 15% of 200
+                value:
+                  operation: percent
+                  a: 200
+                  b: 15
+      responses:
+        '200':
+          description: The operands and the result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalculateResponse'
+              examples:
+                binary:
+                  summary: 10 ÷ 4
+                  value:
+                    operation: divide
+                    a: 10
+                    b: 4
+                    result: 2.5
+                unary:
+                  summary: √16
+                  value:
+                    operation: sqrt
+                    a: 16
+                    result: 4
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/Timeout'
+
+  /api/v1/operations:
+    get:
+      operationId: listOperations
+      tags: [calculator]
+      summary: List the supported operations
+      description: |
+        The registry the calculator evaluates against: a client renders its
+        buttons from this list and never hard-codes the names. `arity` is how
+        many operands the operation takes, and therefore whether `b` belongs
+        in the calculate request.
+      responses:
+        '200':
+          description: Every operation the server supports, in display order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationsResponse'
+              examples:
+                all:
+                  summary: The registry this version ships with
+                  value:
+                    operations:
+                      - name: add
+                        symbol: +
+                        arity: 2
+                      - name: subtract
+                        symbol: −
+                        arity: 2
+                      - name: multiply
+                        symbol: ×
+                        arity: 2
+                      - name: divide
+                        symbol: ÷
+                        arity: 2
+                      - name: power
+                        symbol: ^
+                        arity: 2
+                      - name: sqrt
+                        symbol: √
+                        arity: 1
+                      - name: percent
+                        symbol: '%'
+                        arity: 2
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/Timeout'
+
+  /api/v1/openapi.yaml:
+    get:
+      operationId: getOpenAPISpec
+      tags: [contract]
+      summary: This document
+      description: |
+        The contract the running process was built from, embedded in the
+        binary: what it serves cannot have drifted from what it implements.
+      responses:
+        '200':
+          description: The OpenAPI document, as YAML.
+          headers:
+            Cache-Control:
+              description: Always `no-store` — the spec belongs to the running binary, not to a cache.
+              required: true
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: object
+                description: |
+                  This document. It is a YAML serialisation of an OpenAPI 3.1
+                  document, so the body parses as a mapping; its shape is the
+                  OpenAPI specification itself and is not repeated here.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Timeout'
+
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [operational]
+      summary: Liveness probe
+      description: |
+        `200` for as long as the process serves, including while it drains — a
+        draining process must not be restarted. It says nothing about
+        dependencies: a failing liveness probe means "restart me", so it must
+        not fail for a reason a restart cannot fix.
+      responses:
+        '200':
+          description: The process is alive.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                alive:
+                  value:
+                    status: ok
+
+  /readyz:
+    get:
+      operationId: readyz
+      tags: [operational]
+      summary: Readiness probe
+      description: |
+        `200` while the server accepts work; `503` with code `NOT_READY` from
+        the moment shutdown starts, before the listener closes, so a load
+        balancer takes this instance out of rotation while it can still finish
+        the requests it has.
+      responses:
+        '200':
+          description: The process accepts new requests.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              examples:
+                ready:
+                  value:
+                    status: ready
+        '503':
+          $ref: '#/components/responses/NotReady'
+
+  /version:
+    get:
+      operationId: version
+      tags: [operational]
+      summary: Build identity of the running binary
+      description: Matches a deployed instance to a commit.
+      responses:
+        '200':
+          description: The build information stamped into the binary.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+              examples:
+                release:
+                  value:
+                    version: v1.0.0
+                    commit: 0ddba11
+                    buildDate: '2026-09-23T10:00:00Z'
+                    goVersion: go1.27.1
+
+  /metrics:
+    get:
+      operationId: metrics
+      tags: [operational]
+      summary: Prometheus exposition
+      description: |
+        The families documented in `backend/README.md`, in the Prometheus text
+        format, for this process only. Mounted on the API's own listener; a
+        separate admin listener is follow-up #38.
+      responses:
+        '200':
+          description: The text exposition of this process's registry.
+          headers:
+            Cache-Control:
+              description: Always `no-store` — the body is a snapshot of this instant.
+              required: true
+              schema:
+                type: string
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  schemas:
+    OperationName:
+      type: string
+      description: The name of an operation in the calculator's registry.
+      enum: [add, subtract, multiply, divide, power, sqrt, percent]
+      example: divide
+
+    Operand:
+      type: number
+      format: double
+      description: |
+        A finite IEEE-754 double. JSON cannot carry NaN or ±Infinity, and a
+        request that names one another way is rejected with
+        `VALIDATION_FAILED`.
+      example: 10
+
+    CalculateRequest:
+      type: object
+      description: |
+        One operation and its operands. `b` is required for every operation
+        whose `arity` is 2 and must be omitted for a unary one — `"b": null`
+        counts as omitted. The `oneOf` below says exactly that: the two
+        branches are disjoint on `operation`, so exactly one of them applies
+        to any given request.
+      required: [operation, a]
+      properties:
+        operation:
+          $ref: '#/components/schemas/OperationName'
+        a:
+          $ref: '#/components/schemas/Operand'
+        b:
+          type: [number, 'null']
+          format: double
+          description: The second operand, for a binary operation.
+      additionalProperties: false
+      oneOf:
+        - title: Binary operation
+          description: add, subtract, multiply, divide, power and percent take two operands.
+          required: [b]
+          properties:
+            operation:
+              enum: [add, subtract, multiply, divide, power, percent]
+            b:
+              type: number
+        - title: Unary operation
+          description: sqrt takes a single operand.
+          properties:
+            operation:
+              enum: [sqrt]
+            b:
+              type: 'null'
+
+    CalculateResponse:
+      type: object
+      description: The request as the server understood it, plus the result.
+      required: [operation, a, result]
+      properties:
+        operation:
+          $ref: '#/components/schemas/OperationName'
+        a:
+          $ref: '#/components/schemas/Operand'
+        b:
+          type: number
+          format: double
+          description: Echoed for a binary operation, absent for a unary one.
+        result:
+          type: number
+          format: double
+          description: Always finite; an overflow is a `422 RESULT_NOT_FINITE` instead.
+      additionalProperties: false
+
+    Operation:
+      type: object
+      description: One entry of the calculator's registry.
+      required: [name, symbol, arity]
+      properties:
+        name:
+          $ref: '#/components/schemas/OperationName'
+        symbol:
+          type: string
+          description: The symbol to render on a key, such as `÷`.
+        arity:
+          type: integer
+          description: How many operands the operation takes.
+          enum: [1, 2]
+      additionalProperties: false
+
+    OperationsResponse:
+      type: object
+      description: The whole registry, in display order.
+      required: [operations]
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Operation'
+      additionalProperties: false
+
+    StatusResponse:
+      type: object
+      description: The body of the liveness and readiness probes.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready]
+      additionalProperties: false
+
+    VersionResponse:
+      type: object
+      description: The build identity of the running binary.
+      required: [version, commit, buildDate, goVersion]
+      properties:
+        version:
+          type: string
+        commit:
+          type: string
+        buildDate:
+          type: string
+        goVersion:
+          type: string
+      additionalProperties: false
+
+    ProblemCode:
+      type: string
+      description: |
+        The stable, machine-readable error code. One code per row of
+        docs/errors.md; codes are never renamed once released, and a client
+        branches on this member alone.
+      enum:
+        - INVALID_BODY
+        - VALIDATION_FAILED
+        - UNSUPPORTED_OPERATION
+        - UNEXPECTED_OPERAND
+        - DIVISION_BY_ZERO
+        - DOMAIN_ERROR
+        - RESULT_NOT_FINITE
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - METHOD_NOT_ALLOWED
+        - RATE_LIMITED
+        - INTERNAL
+        - TIMEOUT
+        - NOT_READY
+
+    FieldError:
+      type: object
+      description: One offending request field.
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          description: The name of the field in the request body.
+        message:
+          type: string
+          description: What is wrong with it, in words a UI can show next to the input.
+      additionalProperties: false
+
+    Problem:
+      type: object
+      description: |
+        An RFC 9457 problem details document with a stable `code`. Sent with
+        `Content-Type: application/problem+json` for every error the service
+        produces.
+      required: [type, title, status, detail, code, instance]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: The URL of this code's section in docs/errors.md.
+        title:
+          type: string
+          description: Short human-readable summary of the code; the same for every occurrence.
+        status:
+          type: integer
+          description: The HTTP status code, repeated in the body.
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: |
+            Human-readable explanation of this occurrence. Never contains
+            internal error text, and may be reworded at any time.
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+        instance:
+          type: string
+          description: The path of the request that produced it.
+        requestId:
+          type: string
+          description: |
+            The request's `X-Request-ID`, echoed so a report can be matched to
+            the server log. Present whenever the request travelled through the
+            middleware chain.
+        errors:
+          type: array
+          description: One entry per offending request field, when the error is field-specific.
+          items:
+            $ref: '#/components/schemas/FieldError'
+      additionalProperties: false
+
+  responses:
+    BadRequest:
+      description: |
+        The body is not a single JSON object matching `CalculateRequest`
+        (`INVALID_BODY`), or it is well formed but a required field is missing
+        or not a finite number (`VALIDATION_FAILED`). Both are bugs in the
+        client: do not retry unchanged.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 400
+                  code:
+                    enum: [INVALID_BODY, VALIDATION_FAILED]
+          examples:
+            invalidBody:
+              $ref: '#/components/examples/InvalidBody'
+            validationFailed:
+              $ref: '#/components/examples/ValidationFailed'
+
+    NotFound:
+      description: |
+        No route matches the path. Produced by the router for any path this
+        document does not describe, which is why it is not listed under an
+        operation.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 404
+                  code:
+                    const: NOT_FOUND
+          examples:
+            notFound:
+              $ref: '#/components/examples/NotFound'
+
+    MethodNotAllowed:
+      description: |
+        The path exists but not for this method. Produced by the router for
+        any method this document does not describe on a path it does, which is
+        why it is not listed under an operation.
+      headers:
+        Allow:
+          description: The methods that are allowed on this path.
+          required: true
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 405
+                  code:
+                    const: METHOD_NOT_ALLOWED
+          examples:
+            methodNotAllowed:
+              $ref: '#/components/examples/MethodNotAllowed'
+
+    PayloadTooLarge:
+      description: The body exceeds 4096 bytes. A calculate request is well under 100.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 413
+                  code:
+                    const: PAYLOAD_TOO_LARGE
+          examples:
+            payloadTooLarge:
+              $ref: '#/components/examples/PayloadTooLarge'
+
+    UnsupportedMediaType:
+      description: |
+        `Content-Type` is missing, malformed or not `application/json`.
+        Parameters such as `charset=utf-8` are allowed.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 415
+                  code:
+                    const: UNSUPPORTED_MEDIA_TYPE
+          examples:
+            unsupportedMediaType:
+              $ref: '#/components/examples/UnsupportedMediaType'
+
+    UnprocessableEntity:
+      description: |
+        The request is valid but the arithmetic has no answer, or names an
+        operation the registry does not have. Nothing about the request needs
+        fixing except its meaning, so these are `422` rather than `400`.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 422
+                  code:
+                    enum:
+                      - UNSUPPORTED_OPERATION
+                      - UNEXPECTED_OPERAND
+                      - DIVISION_BY_ZERO
+                      - DOMAIN_ERROR
+                      - RESULT_NOT_FINITE
+          examples:
+            unsupportedOperation:
+              $ref: '#/components/examples/UnsupportedOperation'
+            unexpectedOperand:
+              $ref: '#/components/examples/UnexpectedOperand'
+            divisionByZero:
+              $ref: '#/components/examples/DivisionByZero'
+            domainError:
+              $ref: '#/components/examples/DomainError'
+            resultNotFinite:
+              $ref: '#/components/examples/ResultNotFinite'
+
+    TooManyRequests:
+      description: |
+        The client went over its token bucket (`RATE_LIMIT_RPS` sustained,
+        `RATE_LIMIT_BURST` back to back, per server process and keyed on the
+        client's address). Back off for `Retry-After` seconds; never retry in
+        a tight loop. The operational endpoints are never rate limited.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait before retrying; at least 1.
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 429
+                  code:
+                    const: RATE_LIMITED
+          examples:
+            rateLimited:
+              $ref: '#/components/examples/RateLimited'
+
+    InternalServerError:
+      description: |
+        An unexpected server error, including a panic caught by the recovery
+        middleware. `detail` is deliberately generic; the cause is logged
+        server-side under the same `requestId`.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 500
+                  code:
+                    const: INTERNAL
+          examples:
+            internal:
+              $ref: '#/components/examples/Internal'
+
+    Timeout:
+      description: |
+        The request took longer than `REQUEST_TIMEOUT` and was abandoned. It
+        is a `503` rather than a `504`: no upstream timed out, this server
+        declined to keep working on the request. A calculation has no side
+        effects, so a retry with backoff is always safe.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 503
+                  code:
+                    const: TIMEOUT
+          examples:
+            timeout:
+              $ref: '#/components/examples/Timeout'
+
+    NotReady:
+      description: |
+        The process has started shutting down and is draining its in-flight
+        requests. A load balancer takes the instance out of rotation and
+        retries elsewhere; liveness keeps answering `200` throughout.
+      headers:
+        Cache-Control:
+          description: Always `no-store` — a cached readiness answer would keep traffic on a draining process.
+          required: true
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                properties:
+                  status:
+                    const: 503
+                  code:
+                    const: NOT_READY
+          examples:
+            notReady:
+              $ref: '#/components/examples/NotReady'
+
+  examples:
+    InvalidBody:
+      summary: 'INVALID_BODY: {"operation":"add","a":"1","b":2} — a is a string'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#invalid_body'
+        title: 'Invalid request body'
+        status: 400
+        detail: 'field "a" must be a number (byte 26)'
+        code: 'INVALID_BODY'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+        errors:
+          - field: 'a'
+            message: 'must be a number'
+    ValidationFailed:
+      summary: 'VALIDATION_FAILED: {"operation":"add","a":1} — b is missing'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#validation_failed'
+        title: 'Validation failed'
+        status: 400
+        detail: 'missing or invalid fields: b'
+        code: 'VALIDATION_FAILED'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+        errors:
+          - field: 'b'
+            message: 'is required for operation "add"'
+    UnsupportedOperation:
+      summary: 'UNSUPPORTED_OPERATION: {"operation":"modulo","a":1,"b":2}'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#unsupported_operation'
+        title: 'Unsupported operation'
+        status: 422
+        detail: 'operation "modulo" is not supported; GET /api/v1/operations lists the supported operations'
+        code: 'UNSUPPORTED_OPERATION'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+        errors:
+          - field: 'operation'
+            message: 'must be one of: add, subtract, multiply, divide, power, sqrt, percent'
+    UnexpectedOperand:
+      summary: 'UNEXPECTED_OPERAND: {"operation":"sqrt","a":4,"b":2} — sqrt is unary'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#unexpected_operand'
+        title: 'Unexpected operand'
+        status: 422
+        detail: 'operation "sqrt" takes a single operand; omit b'
+        code: 'UNEXPECTED_OPERAND'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+        errors:
+          - field: 'b'
+            message: 'must be omitted for operation "sqrt"'
+    DivisionByZero:
+      summary: 'DIVISION_BY_ZERO: {"operation":"divide","a":1,"b":0}'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#division_by_zero'
+        title: 'Division by zero'
+        status: 422
+        detail: 'b must be non-zero for operation "divide"'
+        code: 'DIVISION_BY_ZERO'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+        errors:
+          - field: 'b'
+            message: 'must be non-zero'
+    DomainError:
+      summary: 'DOMAIN_ERROR: {"operation":"sqrt","a":-1}'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#domain_error'
+        title: 'Result is not a real number'
+        status: 422
+        detail: 'operation "sqrt" has no real-number result for these operands'
+        code: 'DOMAIN_ERROR'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    ResultNotFinite:
+      summary: 'RESULT_NOT_FINITE: {"operation":"power","a":1e308,"b":2}'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#result_not_finite'
+        title: 'Result is not finite'
+        status: 422
+        detail: 'the result of operation "power" is outside the 64-bit floating-point range'
+        code: 'RESULT_NOT_FINITE'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    UnsupportedMediaType:
+      summary: 'UNSUPPORTED_MEDIA_TYPE: the request was sent as text/plain'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#unsupported_media_type'
+        title: 'Unsupported media type'
+        status: 415
+        detail: 'Content-Type must be application/json'
+        code: 'UNSUPPORTED_MEDIA_TYPE'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    PayloadTooLarge:
+      summary: 'PAYLOAD_TOO_LARGE: a body over 4096 bytes'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#payload_too_large'
+        title: 'Payload too large'
+        status: 413
+        detail: 'request body must not exceed 4096 bytes'
+        code: 'PAYLOAD_TOO_LARGE'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    NotFound:
+      summary: 'NOT_FOUND: GET /api/v1/nope'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#not_found'
+        title: 'Not found'
+        status: 404
+        detail: 'no route for GET /api/v1/nope'
+        code: 'NOT_FOUND'
+        instance: '/api/v1/nope'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    MethodNotAllowed:
+      summary: 'METHOD_NOT_ALLOWED: GET /api/v1/calculate'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#method_not_allowed'
+        title: 'Method not allowed'
+        status: 405
+        detail: 'method GET is not allowed; use POST'
+        code: 'METHOD_NOT_ALLOWED'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    RateLimited:
+      summary: 'RATE_LIMITED: one request past the token bucket'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#rate_limited'
+        title: 'Too many requests'
+        status: 429
+        detail: 'too many requests; wait for the time in the Retry-After header and try again'
+        code: 'RATE_LIMITED'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    Internal:
+      summary: 'INTERNAL: any error the service did not anticipate, including a caught panic'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#internal'
+        title: 'Internal server error'
+        status: 500
+        detail: 'an unexpected error occurred'
+        code: 'INTERNAL'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    Timeout:
+      summary: 'TIMEOUT: the request outlived REQUEST_TIMEOUT'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#timeout'
+        title: 'Request timeout'
+        status: 503
+        detail: 'the server took too long to produce a response'
+        code: 'TIMEOUT'
+        instance: '/api/v1/calculate'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'
+    NotReady:
+      summary: 'NOT_READY: GET /readyz while the process drains'
+      value:
+        type: 'https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#not_ready'
+        title: 'Not ready'
+        status: 503
+        detail: 'the server is shutting down and is not accepting new requests'
+        code: 'NOT_READY'
+        instance: '/readyz'
+        requestId: '4bf92f35-77b3-4da6-a3ce-929d0e0e4736'

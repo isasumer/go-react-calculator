@@ -1,11 +1,13 @@
 # Backend
 
 Go service for the calculator API. Module: `github.com/isasumer/go-react-calculator/backend`.
-It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational endpoints below. Every request travels through the middleware chain described below and is counted in the Prometheus families `GET /metrics` exposes.
+It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational endpoints below. The machine-readable contract is
+[`api/openapi.yaml`](api/openapi.yaml), served at `GET /api/v1/openapi.yaml`. Every request travels through the middleware chain described below and is counted in the Prometheus families `GET /metrics` exposes.
 
 ## Layout
 
 ```
+api/                     openapi.yaml: the API contract, embedded and served (B1-06)
 cmd/server/              composition root; main() calls run(ctx, args, getenv, stdout)
 internal/calc/           pure domain (B1-01)
 internal/httpapi/        HTTP transport, problem+json (B1-02)
@@ -109,6 +111,36 @@ unwinds past the logger before there is a status to report — and is logged onc
 the same request ID. And a timed-out response carries the request ID but not the headers layers 5 and 6
 staged, because the handler goroutine is still running and its header map cannot be read safely;
 `http.TimeoutHandler` drops them for the same reason.
+
+## API contract
+
+[`api/openapi.yaml`](api/openapi.yaml) describes the whole HTTP surface in OpenAPI 3.1: both `/api/v1`
+endpoints, the operational ones below, the `Problem` document with the full `code` enum from
+[`docs/errors.md`](../docs/errors.md), and one example per error — the same bytes as the golden files in
+`internal/httpapi/testdata`, which is what `TestContractExamplesMatchGoldenFiles` enforces.
+
+The file is embedded with `//go:embed` and served at `GET /api/v1/openapi.yaml`
+(`application/yaml`, `Cache-Control: no-store`), so a running instance hands out the contract the binary
+was built from and there is no second copy to drift.
+
+It is a test, not a document that happens to sit in the repository:
+`internal/httpapi/openapi_test.go` loads it, validates it with
+[kin-openapi](https://github.com/getkin/kin-openapi) (a test-only dependency) and, through
+`assertMatchesSpec`, validates **every response the handler table tests produce** against it. A status
+the contract does not document, a `code` that does not belong to its status, a body that does not match
+its schema — each fails the test. In CI, `npx @stoplight/spectral-cli lint` (ruleset
+[`.spectral.yaml`](../.spectral.yaml)) lints the document itself in the backend workflow's lint job.
+
+View it as documentation with Redoc (from the repository root):
+
+```bash
+docker run --rm -p 8080:80 -v "$PWD/backend/api:/usr/share/nginx/html/spec:ro" \
+  -e SPEC_URL=spec/openapi.yaml redocly/redoc   # then open http://localhost:8080
+```
+
+or with Swagger UI, swapping the image for
+`-e SWAGGER_JSON=/spec/openapi.yaml -v "$PWD/backend/api:/spec:ro" -p 8080:8080 swaggerapi/swagger-ui`.
+Against a running server, point either at `http://localhost:8081/api/v1/openapi.yaml` instead.
 
 ## Operational endpoints
 

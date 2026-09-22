@@ -794,3 +794,91 @@ and were corrected after reading the failure: a nested ternary left `press` as `
 compared it with `undefined`, so the unsupported-operation key rendered enabled — it is a named
 `pressHandler` function now; and the first landscape layout still scrolled, which is what prompted the
 `landscape-short` variant rather than a comment claiming it was fine.
+
+## Session B1-06 — 2026-09-23
+
+1. `Implement GitHub issue #10 (B1-06: OpenAPI 3.1 contract + integration suite; it absorbed #11 …)`, in full:
+
+   ```
+   Implement GitHub issue #10 (B1-06: OpenAPI 3.1 contract + integration suite; it absorbed #11 — read the "Absorbed from #11" section in the issue) in this repository.
+
+   Read first: CLAUDE.md, `gh issue view 10`, docs/PLAN.md §1.4, docs/errors.md, backend/internal/httpapi/{dto.go,handler.go,probes.go,problem.go} and its testdata/ golden files, backend/cmd/server/main.go (how run() is started in main_test.go), backend/Makefile. Nothing else.
+
+   Constraints:
+   - backend/api/openapi.yaml (OpenAPI 3.1): info, servers, paths /api/v1/calculate, /api/v1/operations, /api/v1/openapi.yaml, /healthz, /readyz, /version, /metrics (text/plain); components: CalculateRequest (operation enum from the calc registry; a required; b required for arity-2 operations — express with oneOf on operation groups or a description + example if oneOf gets unreadable, say which in the PR), CalculateResponse, OperationsResponse, Operation, Problem (RFC 9457 fields + `code` enum listing every code in docs/errors.md + `requestId` + `errors[]`); one example per documented error, copied byte-for-byte from httpapi/testdata golden files.
+   - Serve it: `GET /api/v1/openapi.yaml` via embed.FS, Content-Type `application/yaml`, Cache-Control no-store; 405 for other methods. README (backend/README.md) gets a one-liner to view it with Redoc/Swagger UI via docker.
+   - Contract tests (test-only dependency github.com/getkin/kin-openapi, own go.mod commit): openapi_test.go loads the spec, validates it (`Validate(ctx)`), then a helper `assertMatchesSpec(t, req, resp)` using openapi3filter validates every response produced by the existing handler table tests — wire the helper into the existing handler_test.go table loop rather than duplicating cases. The spec must cover 100 % of the status/code combinations the handler tests produce; a response not described by the spec fails the test.
+   - Integration suite (absorbed #11): backend/cmd/server/integration_test.go starts run() on PORT=0 with env overrides (RATE_LIMIT_RPS small, REQUEST_TIMEOUT short) and drives the full chain over real TCP: happy path 12+7, 422 division by zero with problem+json content type, X-Request-ID echoed when valid and replaced when invalid, 429 with Retry-After after a burst, /metrics contains http_requests_total after traffic, /api/v1/openapi.yaml served, graceful shutdown: cancel ctx during an in-flight slow request and assert /readyz→503 then completion. No sleeps for synchronisation except the rate-limit refill; no fixed ports; whole file < 10 s. Do not add build tags. Do not redo coverage gate/race/shuffle — they exist.
+   - CI: add a spectral lint step to .github/workflows/backend.yml (`npx --yes @stoplight/spectral-cli lint backend/api/openapi.yaml`, ruleset `.spectral.yaml` extending spectral:oas) inside the existing lint job; keep actions pinned.
+   - Docs: flip nothing in ADRs unless you add one (none required); backend/README.md "API contract" subsection: where the spec lives, how contract tests enforce it, how to view it.
+
+   Finish: `make -C backend check` output in the PR body plus `curl -s localhost:PORT/api/v1/openapi.yaml | head -20`; PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #10; `gh pr create` with the PR title from the issue and `Closes #10`. Do not merge. Report the PR URL.
+   ```
+   [In English; no Turkish original to gloss. It arrived wrapped in orchestration rules — a dedicated git
+   worktree on `backend/10-openapi-integration` cut from a fresh `origin/main`, never merge, never push to
+   `main`, rebase before opening the PR and keep both sides if the parallel frontend session has appended
+   this file too. Process, not scope; recorded here so the commit sequence makes sense.]
+
+**Accepted** — The shape of the ticket. `backend/api/openapi.yaml` describes all seven routes and is
+embedded with `//go:embed`, served at `GET /api/v1/openapi.yaml` as `application/yaml` with
+`Cache-Control: no-store` and a `405` with `Allow: GET, HEAD` for anything else. `assertMatchesSpec` is
+wired into the existing `TestRoutes` table loop rather than duplicating its 37 cases, so every response
+the handler produces is validated against the contract: `openapi3filter` with
+`IncludeResponseStatus: true`, which makes an undocumented status a failure instead of a pass. The
+integration suite drives the assembled `run()` over TCP on an ephemeral port with a small rate limit, and
+the whole file finishes in 1.4 s. Spectral lints the document in the existing lint job.
+
+Two constructions carry the weight and were kept as offered:
+
+- The `code` enum is narrowed per status inside each `components/responses` entry (`allOf` of `Problem`
+  plus `status: const` and a `code` enum). That is what turns "100 % of the status/code combinations" into
+  something a validator can check: a `DIVISION_BY_ZERO` sent with a `400` fails the contract test even
+  though it is a perfectly well-formed problem document. Verified by mutation — dropping
+  `DIVISION_BY_ZERO` from the 422 enum and `'413'` from the calculate operation both turn the suite red.
+- `CalculateRequest` uses `oneOf` on operation groups, as the prompt's first option. The branches are
+  disjoint on `operation`, so exactly one applies to any request and the document stays readable: binary
+  requires `b`, unary types it `null` (3.1 lets a type be a list, which is also how the top-level `b`
+  admits an explicit `"b": null` — the server treats it as omitted).
+
+**Rejected (why)** —
+- The issue's `Files / areas` puts the embed in `backend/internal/httpapi/openapi.go`. `//go:embed` cannot
+  reach outside its own directory, so the embed lives in `backend/api/openapi.go` (a package whose only
+  job is to carry the contract) and `internal/httpapi/openapi.go` serves it. Moving the YAML next to the
+  handler instead would have hidden the contract inside `internal/`, where the frontend and the docs
+  cannot point at it.
+- Examples "copied byte-for-byte": JSON pasted into an indented YAML mapping is not byte-identical to the
+  file it came from, so the examples are written as YAML and
+  `TestContractExamplesMatchGoldenFiles` re-encodes each one through the very `Problem` struct the server
+  marshals — with `DisallowUnknownFields`, so a stray member fails — and compares the result byte for byte
+  with `testdata/<code>.json`. The property the ticket wanted is enforced; the bytes are checked by a test
+  rather than by a reviewer's eye.
+- kin-openapi's `routers/gorillamux` → a ten-line exact lookup in the test. The contract has no path
+  templates, so a map lookup *is* the router; it keeps `gorilla/mux` out of the module graph and it
+  distinguishes "this path is not described" (the catch-all `404`) from "this method is not described on
+  this path" (the `405`), which is exactly the distinction the two answers need. `HEAD` resolves to the
+  `GET` operation, as `net/http`'s own router does.
+- `404` and `405` under every operation. They are produced by the router, below any operation; listing
+  them under `POST /api/v1/calculate` would claim that operation can answer something it never answers.
+  They live in `components/responses`, are documented from `info.description`, and the test validates real
+  responses against them — which is why `.spectral.yaml` turns off `oas3-unused-component` and says so.
+- `application/yaml: {schema: {type: string}}` for the spec endpoint → `type: object`. kin-openapi decodes
+  a YAML body before validating it, so a string schema fails against the document it just parsed; the body
+  is a YAML serialisation of an OpenAPI document, and the schema now says so.
+- `REQUEST_TIMEOUT` "short" as tens of milliseconds → 2 s (the default is 5 s). The same file has to hold
+  a request in flight across the shutdown signal, and a 200 ms budget would abandon it with a `503 TIMEOUT`
+  before the drain could prove anything. `PRE_STOP_DELAY` is 1 s for the same reason: it is the window in
+  which a connection is still accepted and answered `503 NOT_READY`, and it is the only second this suite
+  spends.
+- The prompt's "no sleeps except the rate-limit refill" was taken literally: the one `time.Sleep` waits
+  300 ms for three tokens after the burst subtest, because a token bucket refills with time and nothing
+  else. Everything else waits for an event — the `listening` and `shutting down` log lines, and the
+  `100 Continue` that proves the handler has started reading the slow request's body.
+- Silencing spectral's only remaining warning by disabling `info-contact` → added a real `contact` block
+  pointing at the repository. The lint output is clean, `0 errors 0 warnings`, so the next warning will be
+  seen.
+- `.spectral.yaml` left out of the workflow's path filters → added to both, so editing the ruleset runs
+  the job it governs.
+
+**Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green
+(total coverage 98.0 %), `npx @stoplight/spectral-cli lint` clean, and the built binary curled for the
+transcript in the PR body. The mutation checks above were run by hand and reverted.
