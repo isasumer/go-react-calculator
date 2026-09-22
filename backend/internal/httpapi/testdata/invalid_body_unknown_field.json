@@ -1,0 +1,15 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#invalid_body",
+  "title": "Invalid request body",
+  "status": 400,
+  "detail": "field \"c\" is not allowed",
+  "code": "INVALID_BODY",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736",
+  "errors": [
+    {
+      "field": "c",
+      "message": "is not allowed"
+    }
+  ]
+}

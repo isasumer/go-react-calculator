@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#result_not_finite",
+  "title": "Result is not finite",
+  "status": 422,
+  "detail": "the result of operation \"power\" is outside the 64-bit floating-point range",
+  "code": "RESULT_NOT_FINITE",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

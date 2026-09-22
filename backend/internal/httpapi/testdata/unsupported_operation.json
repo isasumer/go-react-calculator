@@ -1,0 +1,15 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#unsupported_operation",
+  "title": "Unsupported operation",
+  "status": 422,
+  "detail": "operation \"modulo\" is not supported; GET /api/v1/operations lists the supported operations",
+  "code": "UNSUPPORTED_OPERATION",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736",
+  "errors": [
+    {
+      "field": "operation",
+      "message": "must be one of: add, subtract, multiply, divide, power, sqrt, percent"
+    }
+  ]
+}

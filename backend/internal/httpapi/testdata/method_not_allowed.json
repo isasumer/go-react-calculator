@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#method_not_allowed",
+  "title": "Method not allowed",
+  "status": 405,
+  "detail": "method GET is not allowed; use POST",
+  "code": "METHOD_NOT_ALLOWED",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

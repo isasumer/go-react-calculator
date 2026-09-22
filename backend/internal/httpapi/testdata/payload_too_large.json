@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#payload_too_large",
+  "title": "Payload too large",
+  "status": 413,
+  "detail": "request body must not exceed 4096 bytes",
+  "code": "PAYLOAD_TOO_LARGE",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

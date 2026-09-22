@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#not_found",
+  "title": "Not found",
+  "status": 404,
+  "detail": "no route for POST /api/v1/calculate/",
+  "code": "NOT_FOUND",
+  "instance": "/api/v1/calculate/",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}
