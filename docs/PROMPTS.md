@@ -52,3 +52,44 @@ ticket that will provide them, ADR template + ADR-0001 (monorepo) + ADR-0002 (fr
 out-of-scope list (no application code, no CI workflows).
 
 **Written by hand** — None in this session; review happens on the PR before merge.
+
+## Session P0-02 — 2026-09-22
+
+1. ```
+   Implement GitHub issue #2 (P0-02: Backend scaffold) in this repository.
+
+   Start by reading CLAUDE.md, then `gh issue view 2`, then docs/PLAN.md §1 and §2 only. Do not explore the rest of the repo beyond the paths the issue lists.
+
+   Constraints for this ticket:
+   - Go 1.27 toolchain is at ~/.local/go/bin (on PATH via ~/.bashrc). Module path: github.com/isasumer/go-react-calculator/backend.
+   - Standard library only for the placeholder server. Use the run(ctx, args, getenv, stdout) error pattern from the issue; main() only calls run() and exits non-zero on error.
+   - Create the empty packages with doc.go files exactly as listed (internal/calc, internal/httpapi, internal/middleware, internal/config, internal/observability). No routes, no handlers, no config parsing yet — those are B1-02 and B1-03.
+   - .golangci.yml with the linters listed in the issue; backend/Makefile with fmt, fmt-check, lint, vet, test (-race -shuffle=on -coverprofile), cover, coverage-check (fails below 85 %), vuln (govulncheck), build (ldflags for version/commit/date), run, check, tools. Pin tool versions.
+   - Write the smoke test for run() (port 0, cancel context, returns nil).
+   - Root `make check` must now succeed for the backend part and still fail fast for the frontend part with the P0-03 message.
+
+   Finish by: running `make -C backend check` and pasting the output into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session P0-02 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #2; opening the PR with `gh pr create` using the PR title from the issue and `Closes #2`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — `go.mod` (`go 1.27`) and the five `doc.go` packages. `cmd/server` with `run(ctx, args, getenv,
+stdout) error`: `signal.NotifyContext` for SIGINT/SIGTERM, a single `-addr` flag (default `:8081`) so tests
+can bind port 0, `net.ListenConfig.Listen` so the listener respects ctx (the `noctx` linter asks for this),
+`http.NotFoundHandler`, `ReadHeaderTimeout` (gosec G112), JSON slog, a `listening` log line with the bound
+address and build info, graceful `Shutdown` with a timeout derived from `context.WithoutCancel`. Smoke test
+reads the first log line through an `io.Pipe`, sends a GET that returns 404, cancels, and expects `nil`. A
+table test covers the flag and listen error paths. Tool versions are pinned in a separate `tools/` module
+using `tool` directives (golangci-lint v2.13.2, gofumpt v0.12.0, govulncheck v1.8.0), so none of their
+dependencies reach the service's `go.mod`. `make tools` builds them into `bin/` with `go install tool`.
+`scripts/coverage-check.sh` parses `go tool cover -func`.
+
+**Rejected (why)** — Adding the tools to the service's own `go.mod` with `tool` directives: that pulls
+hundreds of lint dependencies into the service's module graph and govulncheck scope. `gosimple` as a
+separate linter: in golangci-lint v2 it is merged into `staticcheck`, and `gofumpt` is configured under
+`formatters`. The config says so. gofumpt `extra-rules`: deprecated in the pinned version, and it would
+make `make fmt` and lint disagree. `govulncheck` in `make check`: it needs network access to the vuln DB,
+so it stays a separate `make vuln` target (CI hardening in H3-05). Reading `getenv` for the listen address:
+config parsing belongs to B1-03, so the parameter is `_` for now.
+
+**Written by hand** — None. Every file was generated, read, and run locally (`make check`, `make build`,
+the binary run by hand with SIGINT, `make vuln`, and fmt-check and coverage-check run against deliberately
+failing inputs).
