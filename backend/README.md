@@ -1,7 +1,7 @@
 # Backend
 
 Go service for the calculator API. Module: `github.com/isasumer/go-react-calculator/backend`.
-It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational probes below. The middleware chain arrives in B1-04 and metrics in B1-05.
+It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational probes below. Every request travels through the middleware chain described below; metrics arrive in B1-05.
 
 ## Layout
 
@@ -9,7 +9,7 @@ It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`doc
 cmd/server/              composition root; main() calls run(ctx, args, getenv, stdout)
 internal/calc/           pure domain (B1-01)
 internal/httpapi/        HTTP transport, problem+json (B1-02)
-internal/middleware/     middleware chain (B1-04)
+internal/middleware/     middleware chain: recovery, request ID, logging, timeout, security, CORS, rate limit
 internal/config/         env → typed, validated Config with defaults
 internal/observability/  build information; metrics (B1-05)
 scripts/                 coverage-check.sh
@@ -70,22 +70,45 @@ at once, so one restart shows every mistake.
 | `PORT` | `8081` | TCP port, `0`–`65535`. `0` asks the kernel for a free port; the bound port is in the startup log line. |
 | `LOG_LEVEL` | `info` | Minimum slog level: `debug`, `info`, `warn` or `error`. |
 | `LOG_FORMAT` | `json` | slog handler: `json` for shipping, `text` for reading locally. |
-| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowlist for the CORS middleware (B1-04); spaces around items are trimmed and empty items dropped. Empty means no cross-origin browser access — production serves the frontend same-origin (ADR-0009). |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated allowlist for the CORS middleware; spaces around items are trimmed and empty items dropped. Empty means no cross-origin browser access at all — not even a `Vary` header — because production serves the frontend same-origin (ADR-0009). |
 | `READ_HEADER_TIMEOUT` | `5s` | `http.Server.ReadHeaderTimeout`: how long a client may take to send the request headers. |
 | `READ_TIMEOUT` | `10s` | `http.Server.ReadTimeout`: headers plus body. |
 | `WRITE_TIMEOUT` | `10s` | `http.Server.WriteTimeout`: how long a response may take to write. |
 | `IDLE_TIMEOUT` | `60s` | `http.Server.IdleTimeout`: how long a keep-alive connection may sit idle. |
 | `SHUTDOWN_TIMEOUT` | `15s` | Budget for draining in-flight requests after the pre-stop delay. Must be greater than zero. |
 | `PRE_STOP_DELAY` | `0s` | Pause between flipping `/readyz` to 503 and closing the listener. Keep it `0` locally; in Kubernetes set it to about twice the readiness probe period (e.g. `5s`) so the endpoint is removed from every load balancer *before* the process stops accepting connections. |
-| `REQUEST_TIMEOUT` | `5s` | Per-request timeout for the timeout middleware (B1-04). |
-| `RATE_LIMIT_RPS` | `20` | Sustained requests per second per client for the rate limiter (B1-04). Minimum `1`. |
-| `RATE_LIMIT_BURST` | `40` | Burst size for the same limiter. Minimum `1`. |
+| `REQUEST_TIMEOUT` | `5s` | Per-request budget. When it runs out the handler's context is canceled and the client gets a `503` problem with `code: TIMEOUT`. `0` disables the middleware. |
+| `RATE_LIMIT_RPS` | `20` | Sustained requests per second per client, per process. Minimum `1`. |
+| `RATE_LIMIT_BURST` | `40` | How many requests a client may make back to back before that rate applies. Minimum `1`. |
 | `MAX_BODY_BYTES` | `4096` | Maximum accepted request body; larger bodies get `413 PAYLOAD_TOO_LARGE`. |
-| `TRUST_PROXY_HEADERS` | `false` | Whether `X-Forwarded-For` / `X-Request-ID` from upstream may be trusted (B1-04). Only enable behind a proxy you control. |
+| `TRUST_PROXY_HEADERS` | `false` | Whether the rate limiter may key on the first `X-Forwarded-For` entry instead of the peer address. Only enable behind a proxy that overwrites the header; with nothing rewriting it, a client can mint a fresh bucket per request. (An incoming `X-Request-ID` is honoured regardless, when it is syntactically valid — see below.) |
 
 The timeouts accept any Go duration (`750ms`, `5s`, `2m`); `0` disables the `http.Server` ones.
-`REQUEST_TIMEOUT`, `RATE_LIMIT_*`, `MAX_BODY_BYTES` and `TRUST_PROXY_HEADERS` are parsed and logged
-now but only take effect when B1-04 wires the middleware chain.
+`MAX_BODY_BYTES` is parsed and logged but not yet enforced — the body limit is still the 4096-byte
+constant in `internal/httpapi` (follow-up [#62](https://github.com/isasumer/go-react-calculator/issues/62)).
+
+## Middleware
+
+`cmd/server` assembles the chain with `middleware.Chain(router, …)`; the first middleware listed is the
+outermost, so the list reads in the order a request travels (`docs/PLAN.md` §1.2). Each layer is one file
+in `internal/middleware` with its own test.
+
+| # | Layer | What it does |
+|---|---|---|
+| 1 | `Recover` | Catches a panic anywhere below it, logs it with its stack at `error`, and answers `500` `code: INTERNAL`. The panic value never reaches the client, and the process keeps serving. |
+| 2 | `RequestID` | Reuses an incoming `X-Request-ID` matching `^[A-Za-z0-9_-]{1,64}$`, otherwise generates 16 bytes from `crypto/rand` as unpadded base32. Sets it on the response before the handler runs and puts it in the request context, so log lines and problem documents quote the same ID. |
+| 3 | `Logger` | One `slog` line per request: `request_id`, `method`, `path`, `route`, `status`, `bytes`, `duration_ms`, `remote_ip`, `user_agent`. Level follows the status (5xx `error`, 4xx `warn`, else `info`); `/healthz`, `/readyz` and `/metrics` drop to `debug` when they answer normally. |
+| 4 | `Timeout` | Runs the handler with a `REQUEST_TIMEOUT` context and answers `503` `code: TIMEOUT` when it runs out, locking the late handler out of the response. Not `http.TimeoutHandler`: that one writes an HTML body. |
+| 5 | `SecurityHeaders` | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, and `Cache-Control: no-store` on `/api/` routes. |
+| 6 | `CORS` | Allowlist from `CORS_ALLOWED_ORIGINS`, echoing the origin and never `*`; preflight answered `204` with `Allow-Methods`, `Allow-Headers` and `Max-Age: 600`; `Vary: Origin` on everything it looks at. An empty allowlist disables it completely. |
+| 7 | `RateLimit` | Per-client token bucket (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`, `golang.org/x/time/rate`) with TTL eviction of idle buckets. Over the limit: `429` `code: RATE_LIMITED` with `Retry-After`. Skips the operational endpoints. |
+| 8 | *(metrics)* | The slot B1-05 fills — inside the rate limiter, outside the router. `Chain` skips a `nil` entry, so the position is declared rather than described. |
+
+Two consequences of that order are worth knowing. A panicking request produces no access log line — it
+unwinds past the logger before there is a status to report — and is logged once by `Recover` instead, under
+the same request ID. And a timed-out response carries the request ID but not the headers layers 5 and 6
+staged, because the handler goroutine is still running and its header map cannot be read safely;
+`http.TimeoutHandler` drops them for the same reason.
 
 ## Operational endpoints
 

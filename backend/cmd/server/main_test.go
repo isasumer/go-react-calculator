@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httptrace"
 	"net/textproto"
 	"strings"
@@ -113,6 +114,9 @@ func TestRunLifecycle(t *testing.T) {
 		"LOG_LEVEL":        "info",
 		"PRE_STOP_DELAY":   preStopDelay.String(),
 		"SHUTDOWN_TIMEOUT": shutdownTimeout.String(),
+		// The in-flight request below is deliberately slower than a real
+		// one; the timeout middleware would otherwise abandon it mid-drain.
+		"REQUEST_TIMEOUT": "30s",
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -192,6 +196,154 @@ func TestRunLifecycle(t *testing.T) {
 	drain, ok := stopped["drain"].(float64)
 	if !ok || drain < float64(preStopDelay) {
 		t.Errorf("stopped line = %v, want a drain duration of at least the pre-stop delay", stopped)
+	}
+}
+
+// TestChain asserts the composition root wires the chain in the order
+// docs/PLAN.md §1.2 documents, through the behavior only that order can
+// produce. The middleware themselves are tested in internal/middleware; what
+// is being checked here is the assembly.
+func TestChain(t *testing.T) {
+	cfg := config.Config{
+		RequestTimeout:     50 * time.Millisecond,
+		RateLimitRPS:       1,
+		RateLimitBurst:     3,
+		CORSAllowedOrigins: []string{"http://localhost:5173"},
+	}
+	router := http.NewServeMux()
+	router.Handle("POST /api/v1/calculate", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"result":3}`))
+	}))
+	router.Handle("GET /slow", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done() // the timeout cancels it
+	}))
+	router.Handle("GET /boom", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+
+	var out safeBuffer
+	h := chain(router, cfg, newLogger(&out, config.Config{LogFormat: config.FormatJSON, LogLevel: slog.LevelDebug}))
+
+	do := func(method, path string, headers map[string]string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequestWithContext(t.Context(), method, path, http.NoBody)
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Every response carries the request ID and the security headers,
+	// because RequestID and SecurityHeaders wrap everything below them.
+	assertWrapped := func(t *testing.T, rec *httptest.ResponseRecorder, what string) {
+		t.Helper()
+		if rec.Header().Get("X-Request-ID") == "" {
+			t.Errorf("%s: no X-Request-ID", what)
+		}
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q", what, got)
+		}
+	}
+
+	t.Run("router is reached last", func(t *testing.T) {
+		rec := do(http.MethodPost, "/api/v1/calculate", nil)
+		if rec.Code != http.StatusOK || rec.Body.String() != `{"result":3}` {
+			t.Errorf("got %d %q", rec.Code, rec.Body)
+		}
+		assertWrapped(t, rec, "200")
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("Cache-Control = %q", got)
+		}
+	})
+
+	t.Run("preflight is answered above the router", func(t *testing.T) {
+		rec := do(http.MethodOptions, "/api/v1/calculate", map[string]string{
+			"Origin":                        "http://localhost:5173",
+			"Access-Control-Request-Method": http.MethodPost,
+		})
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("preflight = %d, want 204", rec.Code)
+		}
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+			t.Errorf("Access-Control-Allow-Origin = %q", got)
+		}
+		assertWrapped(t, rec, "preflight")
+	})
+
+	t.Run("a panic becomes a problem", func(t *testing.T) {
+		rec := do(http.MethodGet, "/boom", nil)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", rec.Code)
+		}
+		var problem map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if problem["code"] != "INTERNAL" || problem["requestId"] != rec.Header().Get("X-Request-ID") {
+			t.Errorf("problem = %v, X-Request-ID = %q", problem, rec.Header().Get("X-Request-ID"))
+		}
+	})
+
+	t.Run("a slow handler times out", func(t *testing.T) {
+		rec := do(http.MethodGet, "/slow", nil)
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", rec.Code)
+		}
+		var problem map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+			t.Fatal(err)
+		}
+		if problem["code"] != "TIMEOUT" {
+			t.Errorf("code = %v, want TIMEOUT", problem["code"])
+		}
+		if rec.Header().Get("X-Request-ID") == "" {
+			t.Error("the timeout response carries no X-Request-ID")
+		}
+	})
+
+	t.Run("over the limit is refused before the router", func(t *testing.T) {
+		// The burst of 3 is spent by now; this client is done.
+		rec := do(http.MethodPost, "/api/v1/calculate", nil)
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("status = %d, want 429", rec.Code)
+		}
+		if got := rec.Header().Get("Retry-After"); got != "1" {
+			t.Errorf("Retry-After = %q, want 1", got)
+		}
+		assertWrapped(t, rec, "429")
+	})
+
+	// One access log line per request, with every documented field — except
+	// the panicking one, which unwinds past the logger before there is a
+	// status to report and is logged by Recover instead.
+	var access, panics int
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		switch entry["msg"] {
+		case "request":
+			access++
+			for _, field := range []string{
+				"request_id", "method", "path", "route", "status",
+				"bytes", "duration_ms", "remote_ip", "user_agent",
+			} {
+				if _, ok := entry[field]; !ok {
+					t.Errorf("access log line is missing %s: %v", field, entry)
+				}
+			}
+		case "panic recovered":
+			panics++
+			if entry["level"] != "ERROR" || entry["request_id"] == "" {
+				t.Errorf("panic line = %v", entry)
+			}
+		}
+	}
+	if access != 4 || panics != 1 {
+		t.Errorf("%d access lines and %d panic lines, want 4 and 1:\n%s", access, panics, out.String())
 	}
 }
 
