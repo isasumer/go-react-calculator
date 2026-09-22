@@ -1485,3 +1485,85 @@ added, and why" table: the model drafted it, and every row's third column was re
 cost and a concrete reason instead of an adjective. The prose was generated, read and corrected against
 the measured output; all three mermaid diagrams were rendered with `@mermaid-js/mermaid-cli` before commit,
 and every relative link and anchor in the touched files was resolved by a script rather than by eye.
+
+## Session D4-04 — 2026-09-23
+
+> Implement GitHub issue #28 (D4-04: release v1.0.0 preparation, clean-machine verification and submission
+> package; it absorbed #29 — read the "Absorbed from #29" section in the issue).
+>
+> Read first: CLAUDE.md, `gh issue view 28`, docs/PLAN.md §5 (submission checklist) only, README.md (skim
+> headings; read Quick start and Time log fully), docs/PROMPTS.md headings, .github/workflows/*.yml (job
+> names only), compose.yaml (image names/tags and build args), backend/cmd/server (only to find how the
+> version is injected: -ldflags and the VERSION build arg), frontend Dockerfile (VITE_APP_VERSION build
+> arg). Nothing else.
+>
+> Deliverables:
+> 1. docs/SUBMISSION_CHECKLIST.md: the checklist from PLAN §5 as checkboxes, executed now and ticked with
+>    evidence lines (command + one-line result). Items: gofmt/gofumpt + vet + golangci-lint clean;
+>    ESLint/Prettier/type-check clean; coverage numbers in README match a fresh `make check` run; README
+>    commands verified on a fresh clone (`git clone https://github.com/isasumer/go-react-calculator
+>    /tmp/grc-final`, run `docker compose up --build --wait` with FRONTEND_PORT=18080, `make smoke`,
+>    `make check`); no secrets (`git log -p | grep -iE 'api[_-]?key|secret|token'` sanity + gitleaks
+>    already in CI), no `TODO`/`FIXME` left in tracked files (list any and either fix in this PR if
+>    trivial or file a follow-up), no committed build output, `.env*` ignored; every merged PR has a
+>    PROMPTS.md section (compare `gh pr list --state merged` titles against the section list; list gaps
+>    rather than inventing them); all ADRs Accepted; open issues are only `follow-up` labelled in the
+>    Backlog milestone (fix labels/milestones via `gh issue edit` if any sprint issue other than #28 is
+>    still open); commit author of every commit matches the GitHub account (`git log --format='%an <%ae>'
+>    | sort -u`).
+> 2. Version plumbing check: confirm that building with `VERSION=v1.0.0` (compose build arg / make build
+>    ldflags) makes `GET /version` return `v1.0.0` and the frontend header badge show it; if the compose
+>    file or Makefile has no way to pass the version, add the minimal plumbing (build args with defaults)
+>    and document it in README Configuration in one line. Verify with a local build.
+> 3. CHANGELOG.md at the root: a single `## v1.0.0 — <date>` section generated from merged PR titles
+>    grouped by Conventional Commit type (feat/test/ci/build/docs/chore), one line per PR with its number.
+>    This text is also what the orchestrator will paste into the GitHub Release; keep it self-contained.
+> 4. Repository metadata via gh: `gh repo edit` description = "Full-stack calculator: Go REST microservice
+>    + React/TypeScript frontend, built to production standards (tests, CI, containers, ADRs)", topics:
+>    go, react, typescript, calculator, rest-api, docker, openapi, prometheus. Confirm the epic #46 is
+>    pinned (it is) and pin nothing else.
+> 5. docs/SUBMISSION_EMAIL.md: an English email draft to the recruiter (no company name in the file; use
+>    "[Recruiter name]" and "[Company]" placeholders) with: repo link, one-paragraph summary of what was
+>    built, "run it in one command", where tests/coverage/prompts/ADRs live, the honest time note (link
+>    README Time log), that AI tooling was used and how the prompts are shared, availability for a
+>    walkthrough, and a P.S. that the repository is public and contains no company reference. Keep it
+>    under 250 words.
+> 6. Job-hunt tracker: do NOT touch anything outside this repository; the orchestrator updates the
+>    tracker.
+>
+> Finish: PROMPTS.md section with Accepted / Rejected / Written by hand; tick acceptance criteria in #28
+> except the "v1.0.x release exists" item (orchestrator does the tag); `gh pr create` with title
+> `chore(release): prepare v1.0.0 — checklist, changelog, submission package` and `Closes #28`. Do not
+> merge. Report the PR URL.
+
+**Accepted**
+- Running the full checklist for real rather than describing it: `make check` (fresh), a real
+  `docker compose up --build --wait` with `VERSION=v1.0.0`/`FRONTEND_PORT=18080`, `make smoke`,
+  `docker exec ... /server -version`, and grepping the frontend JS bundle for the stamped version, then
+  writing the evidence lines from what those commands actually printed.
+- No plumbing changes: `compose.yaml` already threads `VERSION`/`COMMIT`/`BUILD_DATE` into the backend
+  `-ldflags` build and `VITE_APP_VERSION` into the frontend build arg, and README § Configuration already
+  documents the three compose-level knobs — adding a duplicate line would have been redundant, not
+  additive.
+- Classifying #69 (middleware chain) and #78 (containers) into `feat`/`build` by content for the
+  CHANGELOG, since their PR titles predate a strict Conventional Commit prefix, and saying so inline
+  rather than silently reformatting history.
+- Treating the six open `epic` issues (#41–46) as correctly un-labelled/un-milestoned — they track sprints,
+  not backlog work, so the "only `follow-up` in Backlog" rule does not apply to them; no `gh issue edit`
+  was needed anywhere, since #28 was the only open sprint issue.
+
+**Rejected**
+- Verifying against a real fresh `git clone /tmp/grc-final` — the orchestration rules pin this session to
+  the existing worktree at `/home/sumer/gorc-wt/issue-28` and forbid touching other directories; the
+  worktree is already a clean checkout of `platform/28-release` cut from fresh `origin/main` with a clean
+  `git status`, and `docker compose up --build` used no pre-warmed layer cache for the version-stamped
+  layers, which is the property the fresh-clone step exists to test. Recorded as the substitution it is
+  rather than claiming the literal command was run.
+- Setting an About/homepage link — no live demo is deployed, so there is nothing honest to point it at;
+  leaving it unset rather than linking the repo to itself or a placeholder.
+- Filing a follow-up for the `docs/tickets.json` "TODO" hit — it is this checklist's own instruction text
+  quoted verbatim in the ticket manifest, not a marker left in code, so there was nothing to fix or track.
+
+**Written by hand** — none; this was a verification-and-packaging session, and every deliverable
+(checklist, changelog, email draft, this section) is a direct transcription of command output and repo
+state rather than authored content needing hand-correction beyond wording.
