@@ -546,3 +546,80 @@ the failure and the coverage report: the 16-digit cap test forgot that the place
 itself one of the sixteen digits, and the `state.a ?? 0` fallback in `applyUnary` needed its own row in
 the table (a `√` pressed in `operatorSelected` on a state whose `a` has not arrived yet) before the
 engine reached 100 % branch coverage.
+
+## Session B1-04 — 2026-09-22
+
+1. `Implement GitHub issue #8 (B1-04: Middleware chain) in this repository. Prerequisite #7 is merged; start from a fresh `main`.`
+
+   ```
+   Start by reading CLAUDE.md, then `gh issue view 8`, then docs/PLAN.md §1.2 (middleware order) and §1.4, docs/errors.md, the exported API of backend/internal/httpapi and backend/internal/config (go doc), and backend/cmd/server/main.go to see where the chain is assembled. Do not explore beyond backend/internal/middleware, backend/cmd/server (wiring only), backend/internal/httpapi (only to reuse the Problem writer and populate requestId), docs/errors.md and docs/adr.
+
+   Constraints for this ticket:
+   - One new dependency only: golang.org/x/time/rate. Justify it in the go.mod commit message. Everything else is standard library. No metrics middleware — that is #9; leave a clearly named slot in the chain.
+   - middleware.Chain(h http.Handler, mws ...Middleware) http.Handler where Middleware is func(http.Handler) http.Handler; the first middleware listed is the outermost. Order assembled in run(): Recover → RequestID → Logger → Timeout → SecurityHeaders → CORS → RateLimit → (metrics slot) → router. Write chain_test.go proving the order with a probe handler that records entry/exit.
+   - RequestID: accept an incoming X-Request-ID only if it matches ^[A-Za-z0-9_-]{1,64}$, otherwise generate 16 random bytes from crypto/rand encoded base32 without padding. Set the header on the response before the handler runs, store it in the context with an unexported key and an exported FromContext(ctx) accessor. httpapi.Problem.requestId must now be populated from the context (small change in the problem writer).
+   - Logger: slog, one line per request with request_id, method, path, route pattern (r.Pattern), status, bytes, duration_ms, remote_ip, user_agent. Wrap ResponseWriter to capture status and bytes; implement Flush and Unwrap so http.ResponseController keeps working. Level by status: 5xx error, 4xx warn, else info; /healthz and /readyz logged at debug.
+   - Recover: recover panics (including http.ErrAbortHandler re-panicked as net/http expects), log at error with the stack, write a 500 problem code=INTERNAL if nothing was written yet. Never expose the panic value.
+   - Timeout: enforce REQUEST_TIMEOUT via context and a problem+json 503 code=TIMEOUT (document why not http.TimeoutHandler: its body is plain text and not problem+json). Make sure the handler cannot write after the timeout response (guard with a mutex like TimeoutHandler does).
+   - SecurityHeaders: X-Content-Type-Options nosniff, X-Frame-Options DENY, Referrer-Policy no-referrer, Content-Security-Policy "default-src 'none'; frame-ancestors 'none'", Cache-Control no-store on /api/ routes only.
+   - CORS: allowlist from config CORS_ALLOWED_ORIGINS; when empty, add no CORS headers at all. Preflight OPTIONS from an allowed origin → 204 with Allow-Origin (echo, never *), Allow-Methods "POST, GET, OPTIONS", Allow-Headers "Content-Type, X-Request-ID", Max-Age 600, and Vary: Origin on every response that consults the allowlist. Disallowed origin → no CORS headers, request otherwise proceeds.
+   - RateLimit: per-client token bucket (rate.Limiter) with RATE_LIMIT_RPS and RATE_LIMIT_BURST, buckets in a map guarded by a mutex with TTL eviction of idle entries (evict on a ticker or lazily every N inserts; test it). Client key = host part of RemoteAddr; only when TRUST_PROXY_HEADERS=true use the first X-Forwarded-For entry. Over limit → 429 problem code=RATE_LIMITED with Retry-After (integer seconds, minimum 1). Skip rate limiting for /healthz, /readyz and /metrics.
+   - Tests: one *_test.go per middleware with httptest and a recording handler, plus chain_test.go. Cover: invalid incoming request id replaced; log line fields with a slog handler writing to a buffer; panic → 500 with the request id and the server still serving; timeout → 503 and no double write; preflight allowed/disallowed/empty config; burst then 429 then recovery after refill (use a small rps and time.Sleep sparingly, or inject a clock); eviction; X-Forwarded-For honoured only with TRUST_PROXY_HEADERS.
+   - Docs: add INTERNAL, TIMEOUT, RATE_LIMITED rows to docs/errors.md if missing (NOT_READY already exists), with examples that match golden files. Add a "Middleware" subsection to backend/README.md listing the order and what each layer does in one line.
+
+   Finish by: running `make -C backend check` and pasting the output into the PR body, plus a short curl transcript showing X-Request-ID on a response, a preflight from an allowed origin, and a 429 with Retry-After; appending this prompt verbatim to docs/PROMPTS.md under "## Session B1-04 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #8; opening the PR with `gh pr create` using the PR title from the issue and `Closes #8`. Do not merge. Report the PR URL.
+   ```
+   [The prompt was given in English this time; there is no Turkish original to gloss.]
+
+**Accepted** — Seven middleware, seven files, seven test files, plus `chain.go` (the `Middleware` type and
+`Chain`, which skips `nil` entries so the metrics slot can be declared before B1-05 fills it) and
+`responsewriter.go` (the `recorder` both `Recover` and `Logger` wrap responses in, with `Flush` and `Unwrap`
+so `http.ResponseController` still reaches the connection through four layers — there is a test that sets a
+write deadline through the whole chain against a real server, because that path only exists via `Unwrap`).
+`Timeout` is `http.TimeoutHandler`'s mechanics with a problem+json body: handler on its own goroutine, a
+deadline context, a mutex between it and the response, and its own header map so a late handler cannot
+mutate headers of a response already on the wire. `RateLimit` keys `rate.Limiter`s in a mutex-guarded map
+and sweeps idle buckets every 64th insert — no ticker, so no goroutine to own and stop — and takes a
+`Now func() time.Time` so the burst/refill test asserts the refill instead of sleeping through it. The
+clock, the `IdleTTL` and the eviction sweep are all exercised directly. `docs/errors.md` gained
+`RATE_LIMITED` and `TIMEOUT` rows and sections; their golden files are written by the *middleware* tests
+(`../httpapi/testdata/`), so the documented example is literally the response the chain sends, and
+`httpapi.TestErrorCatalogueMatchesGoldenFiles` then checks the docs against it. Coverage: middleware 99.6 %,
+httpapi 97.2 %, cmd/server 91.3 %, total 97.9 %.
+
+**Rejected (why)**
+- The unexported context key in `internal/middleware`, as the prompt specified → the key and the two
+  accessors live in `internal/httpapi` (`context.go`). `middleware` imports `httpapi` for the problem
+  writer, so `httpapi` reading a key owned by `middleware` would be an import cycle. `middleware.FromContext`
+  is still the accessor the prompt asked for; it is a three-line forward, documented with the reason.
+- `httpapi.Write` reading the ID *only* from the context → context first, the `X-Request-ID` response header
+  second. `Recover` wraps `RequestID`, so it never sees the context that `RequestID` derived; the header it
+  shares is the only thing that ties its 500 to the log line. Same helper (`requestIDOf`) in `Logger`.
+- Buffering the response body like `http.TimeoutHandler` → pass-through writes with a `closed` flag. The
+  handlers here marshal into memory and write once, so buffering would only add a copy; what actually
+  matters is that after `stop()` returns no write is in flight, which the mutex gives directly. The late
+  handler gets `http.ErrHandlerTimeout`, as it would from `TimeoutHandler`.
+- Logging `remote_ip` from `X-Forwarded-For` when `TRUST_PROXY_HEADERS=true` → the log always records the
+  peer address. A log line records what happened; a header anyone can set is not that. The flag changes
+  behaviour only where it has to, in the limiter's key.
+- `crypto/rand.Text()` (26 base32 characters, one call) → an explicit 16-byte `rand.Read`, because the
+  ticket says 16 bytes and the length is then something the test can assert rather than inherit.
+- Treating an `OPTIONS` without `Access-Control-Request-Method` as a non-preflight → any `OPTIONS` from an
+  allowed origin is answered 204. The API defines no other `OPTIONS` semantics, so the alternative outcome
+  is the 405 a disallowed origin already gets.
+- Probe paths logged at `debug` unconditionally → status wins first, so a draining `/readyz` (503) stays
+  visible at `error` for the few seconds it lasts. Only a *healthy* probe drops to `debug`.
+- Closing follow-up #62 (`MAX_BODY_BYTES`) here → it is already closed on GitHub, and the change it
+  describes is not the one-line wiring the orchestrator allowed: it needs a `WithMaxBodyBytes` option and a
+  new field on `httpapi.Handler`, which is request decoding, not the middleware chain. The backend README
+  now says plainly that the variable is parsed but not yet enforced.
+- Leaving the access log's behaviour around panics undocumented → with `Recover` outside `Logger` (the
+  prescribed order, so that a panic in a middleware is caught too), a panicking request produces no access
+  line: it unwinds past the logger before there is a status to report. `Recover`'s own error line carries
+  the request ID, method and path. Written down in the package doc, the README and asserted in
+  `cmd/server`'s chain test. Same for the headers a timed-out response loses — filed as a follow-up rather
+  than reordered, because the order is the ticket's.
+
+**Written by hand** — None. Every file was generated, read and run locally: `make -C backend check` green,
+and the built binary exercised with the curl transcript in the PR body (request ID generated and reused,
+preflight allowed and rejected, burst → 429 with `Retry-After` → 200 after the refill).
