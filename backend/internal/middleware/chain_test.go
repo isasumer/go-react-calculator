@@ -42,7 +42,7 @@ func TestChainSkipsNilSlots(t *testing.T) {
 		trace = append(trace, "handler")
 	})
 
-	// The metrics slot (B1-05) is nil until it is filled.
+	// An unconfigured layer is passed as nil rather than omitted.
 	h := Chain(handler, probe("a", &trace), nil, probe("b", &trace), nil)
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 
@@ -82,7 +82,7 @@ func TestChainProductionOrder(t *testing.T) {
 		SecurityHeaders(),
 		CORS([]string{"http://localhost:5173"}),
 		RateLimit(RateLimitConfig{RPS: 1, Burst: 1}),
-		nil, // metrics, B1-05
+		Metrics(nil), // a chain assembled without a registry
 	)
 
 	first := httptest.NewRecorder()

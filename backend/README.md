@@ -1,7 +1,7 @@
 # Backend
 
 Go service for the calculator API. Module: `github.com/isasumer/go-react-calculator/backend`.
-It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational probes below. Every request travels through the middleware chain described below; metrics arrive in B1-05.
+It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`docs/PLAN.md` §1.4](../docs/PLAN.md#14-api-contract-frozen-after-b1-02-changes-require-an-adr), errors: [`docs/errors.md`](../docs/errors.md)) plus the operational endpoints below. Every request travels through the middleware chain described below and is counted in the Prometheus families `GET /metrics` exposes.
 
 ## Layout
 
@@ -9,9 +9,9 @@ It serves `POST /api/v1/calculate` and `GET /api/v1/operations` (contract: [`doc
 cmd/server/              composition root; main() calls run(ctx, args, getenv, stdout)
 internal/calc/           pure domain (B1-01)
 internal/httpapi/        HTTP transport, problem+json (B1-02)
-internal/middleware/     middleware chain: recovery, request ID, logging, timeout, security, CORS, rate limit
+internal/middleware/     middleware chain: recovery, request ID, logging, timeout, security, CORS, rate limit, metrics
 internal/config/         env → typed, validated Config with defaults
-internal/observability/  build information; metrics (B1-05)
+internal/observability/  build information; Prometheus registry and metric families
 scripts/                 coverage-check.sh
 tools/                   separate Go module that pins dev tool versions
 ```
@@ -102,7 +102,7 @@ in `internal/middleware` with its own test.
 | 5 | `SecurityHeaders` | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`, and `Cache-Control: no-store` on `/api/` routes. |
 | 6 | `CORS` | Allowlist from `CORS_ALLOWED_ORIGINS`, echoing the origin and never `*`; preflight answered `204` with `Allow-Methods`, `Allow-Headers` and `Max-Age: 600`; `Vary: Origin` on everything it looks at. An empty allowlist disables it completely. |
 | 7 | `RateLimit` | Per-client token bucket (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`, `golang.org/x/time/rate`) with TTL eviction of idle buckets. Over the limit: `429` `code: RATE_LIMITED` with `Retry-After`. Skips the operational endpoints. |
-| 8 | *(metrics)* | The slot B1-05 fills — inside the rate limiter, outside the router. `Chain` skips a `nil` entry, so the position is declared rather than described. |
+| 8 | `Metrics` | Counts every request into `http_requests_total`, times it into `http_request_duration_seconds` and holds it in `http_in_flight_requests`. Innermost, directly around the router, because that is the only place the matched route pattern can be read. Skips nothing below it. |
 
 Two consequences of that order are worth knowing. A panicking request produces no access log line — it
 unwinds past the logger before there is a status to report — and is logged once by `Recover` instead, under
@@ -112,7 +112,7 @@ staged, because the handler goroutine is still running and its header map cannot
 
 ## Operational endpoints
 
-These sit outside `/api/v1`: they are for the platform, not for API clients. All three answer
+These sit outside `/api/v1`: they are for the platform, not for API clients. All four answer
 `GET` (and `HEAD`), send `Cache-Control: no-store`, and return a `405` problem with an `Allow`
 header for any other method.
 
@@ -121,6 +121,35 @@ header for any other method.
 | `GET /healthz` | Liveness: `200 {"status":"ok"}` for as long as the process serves, including while it drains — a draining process must not be restarted. |
 | `GET /readyz` | Readiness: `200 {"status":"ready"}` while the server accepts work; `503` problem+json with `code: NOT_READY` from the moment shutdown starts, before the listener closes. |
 | `GET /version` | `200 {"version","commit","buildDate","goVersion"}` for the running binary. |
+| `GET /metrics` | Prometheus text exposition of this process; see [Metrics](#metrics). |
+
+## Metrics
+
+The registry is a private `prometheus.NewRegistry()` built in `cmd/server` and injected — never
+`prometheus.DefaultRegisterer` — carrying the Go runtime and process collectors (`go_*`, `process_*`)
+alongside the five families below. `GET /metrics` serves it on the API's own port; a separate admin
+listener is follow-up [#38](https://github.com/isasumer/go-react-calculator/issues/38). Rationale and
+trade-offs: [ADR-0006](../docs/adr/0006-runtime-stack.md).
+
+| Family | Type | Labels | What to alert on |
+|---|---|---|---|
+| `http_requests_total` | counter | `method`, `route`, `status` | `sum by (route) (rate(…{status=~"5.."}[5m])) / sum by (route) (rate(…[5m]))` above 1 % for 5 min — the service itself is failing; 4xx is the client's problem and belongs on a dashboard, not a pager. |
+| `http_request_duration_seconds` | histogram | `method`, `route` | `histogram_quantile(0.99, sum by (le, route) (rate(…_bucket[5m])))` above 0.25 s — this service does one floating-point operation, so a p99 out of the low buckets means contention or a stuck dependency, not load. |
+| `http_in_flight_requests` | gauge | — | A level that stays high while `rate(http_requests_total[5m])` is flat: requests are arriving and not leaving, which is the shape of a wedged handler well before the timeout budget shows it. |
+| `calc_operations_total` | counter | `operation`, `outcome` | Any `rate(…{outcome="INTERNAL"}[5m]) > 0` — a bug in the calculator. The domain outcomes (`DIVISION_BY_ZERO`, `DOMAIN_ERROR`, `RESULT_NOT_FINITE`, `VALIDATION_FAILED`) are users being users: chart their share, never page on it. |
+| `build_info` | gauge, always 1 | `version`, `commit` | Nothing. `changes(build_info[1h])` annotates deploys on every other graph, which is how a latency step gets attributed to a release. |
+
+Two label rules keep the cardinality bounded by this repository rather than by what clients send:
+
+- `route` is the pattern the router matched (`/api/v1/calculate`), never the request target
+  (`/api/v1/calculate?x=1`) — with the method stripped, since `method` is its own label. A request the
+  router did not match is `route="unmatched"`.
+- `operation` is a name from the `calc` registry. An unsupported operation is counted as
+  `operation="unknown"`, not as the string the client sent.
+
+What the middleware's position costs is written down rather than papered over: a CORS preflight and a
+`429` from the rate limiter never reach it, and a request that `Timeout` answered `503` is counted with
+the status its handler produces when it finally returns. The access log carries all three.
 
 ## Lifecycle
 

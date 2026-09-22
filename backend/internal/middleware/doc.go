@@ -1,12 +1,13 @@
 // Package middleware holds the net/http middleware chain that wraps the
 // router: panic recovery, request IDs, structured access logging, a
-// per-request timeout, security headers, CORS and per-client rate limiting.
+// per-request timeout, security headers, CORS, per-client rate limiting and
+// Prometheus metrics.
 //
 // Each concern is one file with one constructor returning a [Middleware], and
 // [Chain] composes them in the order a request travels through them
 // (outermost first):
 //
-//	Recover → RequestID → Logger → Timeout → SecurityHeaders → CORS → RateLimit → (metrics, B1-05) → router
+//	Recover → RequestID → Logger → Timeout → SecurityHeaders → CORS → RateLimit → Metrics → router
 //
 // The order is deliberate. Recover is outermost so a panic anywhere — in a
 // middleware as much as in a handler — still becomes a problem+json 500.
