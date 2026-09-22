@@ -704,3 +704,93 @@ from a healthy service with no traffic. Both are one branch each and both are te
 and the built binary scraped with the `/metrics` transcript in the PR body (three successful operations,
 one 422 division by zero, a probe, a 405 on `/api/v1/calculate?x=1` that is labeled `/api/v1/calculate`,
 and a 404 that is labeled `/`).
+
+## Session F2-03 — 2026-09-23
+
+Two prompts, as in F2-01 and F2-02: the orchestrator's harness rules, then the ticket.
+
+1.
+   ```
+   ORCHESTRATION RULES (from the orchestrator, override nothing in CLAUDE.md, add to it):
+   - Work ONLY inside the git worktree /home/sumer/gorc-wt/issue-14. It is already on branch `frontend/14-calculator-ui`, cut from fresh origin/main (which includes #12 API layer and #13 engine + store). Do not switch branches, do not touch /home/sumer/go-react-calculator or any other worktree.
+   - Node 22 via nvm: run `source ~/.nvm/nvm.sh && nvm use` (frontend/.nvmrc) in every shell you run.
+   - A backend session (#8) runs in parallel and will also append docs/PROMPTS.md. Never merge. Never push to main. Before opening the PR run `git fetch origin && git rebase origin/main`; if docs/PROMPTS.md conflicts, keep both sides (blank line between sessions) and continue; `git push --force-with-lease` on your own feature branch is allowed for that rebase only.
+   - Carried forward from #12 and #13: QueryProvider is NOT yet wired into src/main.tsx, and the store's `setEvaluator` must be called from the component layer with the `useCalculate` mutation. Both are in scope here.
+   - Your final message must contain: the PR URL, the coverage summary from `npm run test:coverage`, anything you deliberately left out, and any follow-up issues you filed.
+   ```
+
+2.
+   ```
+   Implement GitHub issue #14 (F2-03: Calculator UI) in this repository. Prerequisite #13 is merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 14`, then docs/PLAN.md §1.1 and §1.2, docs/adr/0002-frontend-stack.md and docs/adr/0008-frontend-evaluation-semantics.md, frontend/README.md conventions, frontend/src/app/globals.css (theme tokens), frontend/src/components/ui/button.tsx, and the exported surface of frontend/src/stores/useCalculatorStore.ts, frontend/src/hooks/use-calculate.ts, frontend/src/hooks/use-operations.ts and frontend/src/lib/error-messages.ts. Do not explore beyond frontend/src/{app,components,hooks,stores,test} and frontend/src/main.tsx.
+
+   Constraints for this ticket:
+   - Wire providers: src/main.tsx renders <QueryProvider><ErrorBoundary><App/></ErrorBoundary></QueryProvider>. src/components/providers/ErrorBoundary.tsx is a small class component with a plain fallback and a reload button, tested.
+   - src/components/calculator/Calculator.tsx composes everything and is the only place that touches both the store and React Query: on mount it calls `setEvaluator(mutateAsync)` from `useCalculate()` (stable via useEffect with the mutation's mutateAsync in deps), reads state via the store selectors, and passes plain props/callbacks down. Display.tsx: expression line (selectExpression) above the entry/result line, `aria-live="polite"` on the result region, error slot rendering the store error with `role="alert"`, tabular-nums monospace, font-size shrinks with CSS `clamp()`/container query or a length-based class as the entry grows; full raw value in a `title` attribute. Keypad.tsx: CSS grid 4 columns, order: AC / CE / ⌫ / ÷ ; 7 8 9 × ; 4 5 6 − ; 1 2 3 + ; ± 0 . = ; operator column visually accented, `=` distinct. OperationsBar.tsx above the keypad shows unary/extra operations from useOperations() (√, %, xʸ) driven by the registry so a new backend operation with arity 1 appears automatically; binary ones not in the keypad (power) render here too. Key.tsx wraps ui/button with variant digit | operator | action | equals, `aria-label` (e.g. "multiply", "clear all"), `aria-keyshortcuts` where a keyboard key exists (F2-04 will implement the handler; the attribute is informational now), min 44×44 px hit area.
+   - Busy state: while selectIsBusy is true, all keys except AC are `disabled` and Display shows a subtle inline spinner or "…" (respect prefers-reduced-motion). Store already ignores input while pending; the UI must reflect it.
+   - Layout: mobile-first, max-width 24rem centred, safe-area padding, no horizontal scroll at 320 px, landscape phone still usable (keys shrink, display stays visible). Theme from globals.css tokens; dark mode via prefers-color-scheme; visible focus rings; no colour as the only signal for operator keys (also weight/shape).
+   - `data-ui` attribute on every component root ("calculator", "calculator.display", "calculator.keypad", "calculator.key", "calculator.operations", "error-boundary").
+   - App.tsx: header with the app name and a version badge that reads from `import.meta.env.VITE_APP_VERSION` (default "dev"; no network call), then <Calculator/>. Remove the scaffold placeholder content and update the scaffold App.test.tsx accordingly.
+   - Tests (Testing Library queries by role/label only, no class selectors): Calculator.test.tsx drives "12 + 7 =" through the store with the MSW-mocked API and asserts 19 in the live region; division by zero shows the mapped message in the alert slot and the next digit clears it; keys are disabled while a slow MSW response is pending and AC still works; unary √ via OperationsBar; expression line shows "12 +" after the operator. Display.test.tsx (expression, error, title attr, live region). Key.test.tsx (variants, aria attributes, disabled). ErrorBoundary.test.tsx. a11y.test.tsx with vitest-axe (add dev dependency) asserting no violations on initial render and in error state. Keep overall coverage at 100 % where practical; new component files ≥ 90 % lines.
+   - Do not implement keyboard handling (F2-04 #15), history/localStorage (F2-05 #16) or number formatting (F2-06 #17: leave `String(value)` display; do not add a formatter). Do not change vitest thresholds (#18).
+
+   Finish by: running `make -C frontend check`, `npm run test:coverage` and `npm run build`, pasting the outputs into the PR body, plus two screenshots (light and dark, mobile width) captured with `npx playwright screenshot` or `npx vite preview` + a headless browser if available — if no browser is available, say so in the PR body instead of skipping silently; appending this prompt verbatim to docs/PROMPTS.md under "## Session F2-03 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #14 (note the Lighthouse item as "not run: no browser in CI/session" if that is the case); opening the PR with `gh pr create` using the PR title from the issue and `Closes #14`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — The composition rule the ticket asks for, taken literally: `Calculator.tsx` is the only
+module that imports both the store and a React Query hook. It hands `useCalculate().mutateAsync` to
+`setEvaluator` in one effect (`mutateAsync` is stable for the life of the mutation, so the effect runs
+once) and unwires it on unmount, reads state through the four selectors, and passes plain values and
+stable zustand actions downwards — which is why `Display`, `Keypad` and `Key` render in their tests with
+no provider and no store at all. `Display` is three fixed lines so nothing moves when an error appears:
+the expression, the value in an `<output>` (implicit `role="status"`, with `aria-live="polite"` and
+`aria-busy` while a request is in flight, so a live region that is about to be replaced stays quiet),
+and a permanently mounted `role="alert"` slot — a live region has to exist *before* its text changes to
+be announced. Font size steps down with the length of the entry rather than with `clamp()`, because the
+display is a fixed 24 rem column: what has to fit is characters, not viewport. `Keypad` is a data table
+of twenty descriptors, so the documented order, the labels and the `aria-keyshortcuts` values are
+readable in one place and the busy rule is one expression; a test asserts the twenty accessible names in
+order, which is the layout the issue specifies. `OperationsBar` renders whatever `GET /api/v1/operations`
+returns minus the four keys the pad already owns, so `power`, `sqrt` and `percent` appear today and a
+future arity-1 operation appears on its own — disabled, with a tooltip saying why, because this build
+has no action for it (a test adds `cbrt` to the registry and asserts exactly that). Operator keys are not
+distinguished by colour alone: they are also larger and bolder, and `=` is the only round key on the pad.
+`ErrorBoundary` is deliberately reload-only — the state that made a component throw is still there, so a
+retry would re-render the same failure. A `landscape-short` custom variant in `globals.css` puts the
+display and the operations bar beside the pad on a phone held sideways, where the two cannot be stacked
+without pushing the display off-screen or shrinking keys below 44 px. 328 tests, `make -C frontend check`
+green, and 100 % statements/branches/functions/lines overall and on every file added here. Dependency
+added: `vitest-axe` (dev only), which the ticket names.
+
+**Rejected (why)**
+- Extending `Key` with a placeholder `onPress` for an operation this build cannot perform → `onPress`
+  became optional instead, documented as "omitted only for a key that is also disabled". A no-op handler
+  is an uncoverable function *and* a lie about what the key does.
+- `screen.getByText("Version dev")` and `toHaveClass("sr-only")` in `App.test.tsx` → Testing Library's
+  text matcher reads an element's own text nodes, and the ticket bans class selectors; the badge is
+  asserted through its accessible text (`Version dev`) instead.
+- `aria-label` on the version badge (a `<p>`) → axe's `aria-prohibited-attr` is right to flag a label on
+  an element with no role; an `sr-only` prefix reads correctly and survives the a11y test.
+- `vitest-axe`'s `toHaveNoViolations` matcher → it needs a `declare module` augmentation with `any` to
+  type-check. The tests map `results.violations` to `id: help` and compare with `toEqual([])`, which
+  prints a better failure than the matcher does.
+- Spying on `window.location.reload` → jsdom's `Location` is `[LegacyUnforgeable]`, so the property
+  cannot be redefined; `vi.stubGlobal("location", …)` replaces the whole object and is undone in
+  `afterEach`.
+- Reading `import.meta.env` inline in `App` → `appVersion(env)` is a pure function with its own table
+  test, and the ambient env type (`Record<string, any>`) stops at that boundary, as it does in
+  `config.ts`.
+- A `<header>` inside `<main>` → it is not a `banner` landmark there, so the shell is a plain wrapper
+  with `header` and `main` as siblings; every piece of content is then inside a landmark.
+- Number formatting, keyboard handling, a history panel, and touching `vitest.config.ts` thresholds →
+  F2-06 (#17), F2-04 (#15), F2-05 (#16) and #18. The display still shows `String(value)`.
+
+**Written by hand** — None. Every file was generated, read and run locally (`make -C frontend check`,
+`npm run test:coverage`, `npm run build`) before commit, and the three screenshots in
+`docs/screenshots/` were captured from `vite preview` with the headless Chromium already on this
+machine (`--blink-settings=preferredColorScheme=0` for the dark one). Two generated pieces were wrong
+and were corrected after reading the failure: a nested ternary left `press` as `null` while the props
+compared it with `undefined`, so the unsupported-operation key rendered enabled — it is a named
+`pressHandler` function now; and the first landscape layout still scrolled, which is what prompted the
+`landscape-short` variant rather than a comment claiming it was fine.
