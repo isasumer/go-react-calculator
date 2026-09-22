@@ -29,3 +29,19 @@ type OperationInfo struct {
 	Symbol string `json:"symbol"`
 	Arity  int    `json:"arity"`
 }
+
+// StatusResponse is the body of the liveness and readiness probes:
+// {"status":"ok"} for /healthz and {"status":"ready"} for /readyz.
+type StatusResponse struct {
+	Status string `json:"status"`
+}
+
+// VersionResponse is the body of GET /version. It mirrors
+// observability.BuildInfo, which is where the values come from; the wire
+// shape lives here with the other DTOs.
+type VersionResponse struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	BuildDate string `json:"buildDate"`
+	GoVersion string `json:"goVersion"`
+}

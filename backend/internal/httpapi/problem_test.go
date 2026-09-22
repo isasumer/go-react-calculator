@@ -30,6 +30,7 @@ var allCodes = []Code{
 	CodeNotFound,
 	CodeMethodNotAllowed,
 	CodeInternal,
+	CodeNotReady,
 }
 
 func TestNewProblem(t *testing.T) {
@@ -50,6 +51,7 @@ func TestNewProblem(t *testing.T) {
 		{CodeNotFound, 404, "Not found"},
 		{CodeMethodNotAllowed, 405, "Method not allowed"},
 		{CodeInternal, 500, "Internal server error"},
+		{CodeNotReady, 503, "Not ready"},
 		{Code("SOMETHING_NEW"), 500, "Internal server error"},
 	}
 	if len(tests) != len(allCodes)+1 {
