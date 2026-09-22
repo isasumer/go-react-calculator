@@ -1,5 +1,8 @@
 # go-react-calculator
 
+[![backend](https://github.com/isasumer/go-react-calculator/actions/workflows/backend.yml/badge.svg?branch=main)](https://github.com/isasumer/go-react-calculator/actions/workflows/backend.yml)
+[![frontend](https://github.com/isasumer/go-react-calculator/actions/workflows/frontend.yml/badge.svg?branch=main)](https://github.com/isasumer/go-react-calculator/actions/workflows/frontend.yml)
+
 Full-stack calculator: a Go REST microservice and a React + TypeScript frontend, built to production standards (typed config, graceful shutdown, structured logs, metrics, rate limiting, RFC 9457 errors, OpenAPI contract, CI gates, hardened containers, e2e tests).
 
 > Work in progress. The implementation plan, sprint breakdown and every ticket live in [`docs/PLAN.md`](docs/PLAN.md); progress is tracked in the GitHub issues and milestones of this repository.

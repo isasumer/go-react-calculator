@@ -144,3 +144,62 @@ scheme forced.
 
 **Written by hand** — None; every generated file was read and `make -C frontend check` / `npm run build`
 were executed locally before commit.
+
+## Session P0-04 — 2026-09-22
+
+1. Prompt (verbatim):
+
+   ```text
+   Implement GitHub issue #4 (P0-04: CI v1) in this repository. Prerequisites #2 and #3 are merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 4`, then docs/PLAN.md §2, backend/Makefile and frontend/Makefile (to reuse their targets rather than duplicating commands in YAML).
+
+   Constraints for this ticket:
+   - .github/workflows/backend.yml: triggers on pull_request and push to main with paths filter backend/** plus the workflow file itself. Jobs: lint (golangci-lint-action, version pinned to the one in backend/Makefile), test (make -C backend test; upload coverage.out and coverage.html as artifacts; write a per-package coverage table to $GITHUB_STEP_SUMMARY; run the coverage gate script), vuln (govulncheck). Use actions/setup-go reading go.mod with module cache.
+   - .github/workflows/frontend.yml: paths filter frontend/**; setup-node 22 with npm cache; npm ci, lint, type-check, test:coverage (upload lcov, write the json-summary as a table to the step summary), build.
+   - Every workflow: concurrency group per ref with cancel-in-progress, job timeouts, least-privilege top-level `permissions: contents: read`, every `uses:` pinned to a full commit SHA with a `# vX.Y.Z` comment.
+   - Add a final `ci-ok` job per workflow that `needs` all others and fails if any failed or was cancelled, so branch protection references one check per workflow.
+   - .github/dependabot.yml: gomod (backend/), npm (frontend/), github-actions, docker; weekly; group minor and patch updates.
+   - Branch protection on main via `gh api` (PUT repos/isasumer/go-react-calculator/branches/main/protection): require PR, required status checks = the two ci-ok jobs (strict), dismiss stale reviews, required linear history, no force pushes, no deletions, enforce for admins. Print the resulting protection JSON in the PR body.
+   - Add status badges for both workflows at the top of README.md (keep the section headings untouched).
+   - Verify path filtering: this PR touches only .github/ and README, so note in the PR which workflows ran and why. After the PR is open, open a throwaway PR from a branch that introduces a deliberate lint error in backend/, confirm the ci-ok check blocks it, then close that PR and delete its branch; record the PR number as evidence.
+   - Do not add Docker build, e2e, CodeQL, Trivy or release jobs — those are H3-03, H3-04, H3-05, H3-06.
+
+   Finish by: pasting the workflow run URLs and the protection JSON into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session P0-04 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #4; opening the PR with `gh pr create` using the PR title from the issue and `Closes #4`. Do not merge. Report the PR URL.
+   ```
+
+2. Answer to the assistant's question about the conflict between workflow-level path filters and required
+   status checks (verbatim option chosen):
+
+   ```text
+   Filter at job level (Recommended)
+   ```
+
+**Accepted** — `backend.yml` with lint (golangci-lint-action pinned to v2.13.2, the version in
+`backend/tools/go.mod`, plus a step that fails if the two drift apart; `make fmt-check` for gofumpt),
+test (`make -C backend test`, `coverage.out` + `coverage.html` artifacts, a per-package table from an awk
+pass over the profile, `make coverage-check`) and vuln (`make -C backend vuln`, i.e. the pinned govulncheck);
+`frontend.yml` running the `frontend/Makefile` targets, with vitest called directly only to add the
+`json-summary` reporter, which a node snippet turns into the step-summary table; `ci-ok (backend)` /
+`ci-ok (frontend)` gate jobs; all actions pinned to release SHAs; Dependabot for gomod (`/backend` and
+`/backend/tools`), npm, github-actions and docker with grouped minor/patch; README badges; branch
+protection with the two ci-ok checks (strict), 0 required approvals (solo repository; with enforce_admins a
+required approval could never be given), stale-review dismissal, linear history, no force pushes/deletions,
+admins included. Throwaway PR #53 (deliberate gosec/errcheck violation) showed `ci-ok (backend)` failing and
+merge state `BLOCKED`; closed and branch deleted.
+
+**Rejected (why)**
+- Workflow-level `paths:` filters on `pull_request` as written in the prompt: GitHub leaves a required check
+  from a skipped workflow in "Pending", so with both ci-ok checks required (and enforce_admins on)
+  every backend-only, frontend-only or docs-only PR could never merge. The user chose job-level filtering:
+  a `changes` job lists the PR's files via the API and the heavy jobs are skipped when nothing relevant
+  changed; ci-ok treats "skipped" as pass. Pushes to main keep a workflow-level paths filter.
+- `cancel-in-progress: true` for every event — only PR runs are cancelled, so a push to main never cancels
+  the run for the previous main commit.
+- A third-party paths-filter action — the GitHub API plus `grep` does the same with no extra dependency.
+- A live `git push` to main to prove it is rejected — if protection were misconfigured, undoing it would
+  need a force-push, which is forbidden. The protection JSON (PR required, enforce_admins) is the evidence.
+- actionlint as a CI job — outside this ticket's Files list; filed as follow-up #54. It was run locally.
+
+**Written by hand** — None; the workflow summary steps were extracted from the YAML and executed locally
+against real coverage output, actionlint was run on both workflows, and `make check` passed before commit.
