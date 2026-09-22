@@ -203,3 +203,47 @@ merge state `BLOCKED`; closed and branch deleted.
 
 **Written by hand** — None; the workflow summary steps were extracted from the YAML and executed locally
 against real coverage output, actionlint was run on both workflows, and `make check` passed before commit.
+
+## Session B1-01 — 2026-09-22
+
+1. Task prompt (verbatim; written in English):
+
+   ```text
+   Implement GitHub issue #5 (B1-01: Domain package internal/calc) in this repository. Start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 5`, then docs/PLAN.md §1.3 and §1.4 (numeric model and the operation list), and backend/Makefile. Do not explore beyond backend/internal/calc and docs/adr.
+
+   Constraints for this ticket:
+   - Zero third-party dependencies. Package doc comment explains the numeric model and links ADR-0003.
+   - Types exactly as the issue specifies: Operation string constants (add, subtract, multiply, divide, power, sqrt, percent), Spec{Name, Symbol, Arity, fn}, an immutable ordered Registry with Lookup and List, and Evaluate(op, a, b *float64) (float64, error) that validates arity.
+   - Sentinel errors ErrUnknownOperation, ErrDivisionByZero, ErrDomain, ErrNotFinite, ErrArity; wrap with %w and operation context so errors.Is works.
+   - Guards: reject NaN/±Inf inputs; result must be finite; percent = a*b/100 ("b percent of a"); 0^0 = 1 documented; sqrt(-x) and non-real Pow results → ErrDomain; -0 normalised to 0.
+   - Tests: table-driven with named cases including MaxFloat64 overflow, 0/0, sqrt(0), 0^0, negative percent, unary op given b, binary op missing b; FuzzEvaluate asserting no panic, finite result when err == nil, sentinel error otherwise; BenchmarkEvaluate; an Example in example_test.go.
+   - Write docs/adr/0003-numeric-model.md using the template (float64 with non-finite guards; decimal mode deferred to follow-up #31; why JSON numbers make float64 the honest choice; the 0.1+0.2 caveat and where it is handled in the UI per ADR-0007). Flip its row in docs/adr/README.md to Accepted.
+   - 100 % statement coverage on internal/calc; `go test -fuzz=FuzzEvaluate -fuzztime=10s ./internal/calc` runs clean.
+
+   Finish by: running `make -C backend check` and the fuzz command and pasting the output into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session B1-01 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #5; opening the PR with `gh pr create` using the PR title from the issue and `Closes #5`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — `backend/internal/calc`: `Operation` constants; `Spec{Name, Symbol, Arity, fn}`; `Registry`
+(built by `NewRegistry`, ordered, read-only, `Lookup` plus `List` returning a copy); `Registry.Evaluate(op, a
+float64, b *float64)` with arity checks, finite-operand and finite-result guards, `-0` → `0`; five sentinels,
+each wrapped with `%w` and the operation name. Two small decisions beyond the prompt, both documented in the
+package doc and in ADR-0003: `0` raised to a negative power returns `ErrDivisionByZero` (it is `1/0`, and
+`math.Pow` would give +Inf); when `a*b` overflows but the percent itself is finite, `percent` falls back to
+`a*(b/100)`. Tests: a 47-row table (every sentinel checked with `errors.Is`, `-0` checked via `math.Signbit`),
+exact error-message context, registry order/copy/lookup, `FuzzEvaluate` (also asserts no `-0` and exactly one
+sentinel per error), `BenchmarkEvaluate`, and two godoc Examples. ADR-0003 written; its README row flipped to
+Accepted.
+
+**Rejected (why)**
+- `Evaluate(op, a, b *float64)` as written in the prompt → the issue and PLAN specify `a float64, b *float64`.
+  Only `b` is optional, and the prompt said "types exactly as the issue specifies", so I followed the issue.
+- `Evaluate` as a package-level function over a package-level registry → CLAUDE.md says "no globals,
+  dependencies injected via structs". `Evaluate` is a method on `*Registry`, which B1-02 will inject into the
+  handler.
+- Filling the README Testing section with the benchmark numbers → that section belongs to B1-07/D4-01.
+  The numbers are in the PR body instead.
+
+**Written by hand** — None; every file was generated, read, and run locally (`make -C backend check`, the
+10 s fuzz run, the benchmark) before commit.

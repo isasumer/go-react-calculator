@@ -6,7 +6,7 @@ One file per decision, numbered, never edited after acceptance except to change 
 |---|---|---|---|
 | [0001](0001-monorepo-layout.md) | Monorepo with two independent build roots | Accepted | #1 |
 | [0002](0002-frontend-stack.md) | Vite + React 19 + TypeScript strict, Tailwind v4, shadcn primitives, TanStack Query, zustand | Accepted | #1 |
-| 0003 | Numeric model: float64 with non-finite guards | Planned | #5 |
+| [0003](0003-numeric-model.md) | Numeric model: float64 with non-finite guards | Accepted | #5 |
 | 0004 | Single `POST /api/v1/calculate` with an operation enum + discovery endpoint | Planned | #6 |
 | 0005 | Errors as RFC 9457 problem+json with a stable machine `code` | Planned | #6 |
 | 0006 | Runtime stack: stdlib router, `log/slog`, Prometheus client | Planned | #9 |
