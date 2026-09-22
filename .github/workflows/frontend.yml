@@ -1,0 +1,129 @@
+# Frontend CI: format, lint, type-check, tests with coverage thresholds, production build.
+#
+# Pull requests always start this workflow so that the required `ci-ok (frontend)` check is reported on
+# every PR. The `changes` job decides whether `check` runs; when nothing under frontend/ changed it is
+# skipped and ci-ok passes. A workflow-level `paths:` filter on pull_request would leave the required
+# check pending forever on PRs that do not touch frontend/. Pushes to main use a plain paths filter.
+name: frontend
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ $EVENT != pull_request ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          if grep -qE '^(frontend/|\.github/workflows/frontend\.yml$)' <<<"$files"; then
+            run=true
+          else
+            run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "frontend changed: $run"
+
+  check:
+    name: check
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install (npm ci)
+        run: make -C frontend install
+      - name: Format check
+        run: make -C frontend format-check
+      - name: Lint
+        run: make -C frontend lint
+      - name: Type-check
+        run: make -C frontend type-check
+      - name: Test with coverage thresholds
+        # Same command as `make -C frontend test`, plus a json-summary report for the step summary.
+        working-directory: frontend
+        run: npm run test:coverage -- --coverage.reporter=text --coverage.reporter=lcov --coverage.reporter=json-summary
+      - name: Coverage summary
+        if: ${{ !cancelled() && hashFiles('frontend/coverage/coverage-summary.json') != '' }}
+        working-directory: frontend
+        run: |
+          node --input-type=module >> "$GITHUB_STEP_SUMMARY" <<'JS'
+          import { readFileSync } from "node:fs";
+          import { relative } from "node:path";
+          const summary = JSON.parse(readFileSync("coverage/coverage-summary.json", "utf8"));
+          const cols = ["lines", "statements", "functions", "branches"];
+          const row = (name, m) => `| ${name} | ${cols.map((c) => `${m[c].pct}% (${m[c].covered}/${m[c].total})`).join(" | ")} |`;
+          const { total, ...files } = summary;
+          console.log("### Frontend coverage\n");
+          console.log(`| File | ${cols.join(" | ")} |`);
+          console.log(`|---|${cols.map(() => "---:").join("|")}|`);
+          for (const [file, m] of Object.entries(files).sort()) console.log(row(`\`${relative(process.cwd(), file)}\``, m));
+          console.log(row("**total**", total));
+          JS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: frontend-coverage
+          path: |
+            frontend/coverage/lcov.info
+            frontend/coverage/coverage-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Build
+        run: make -C frontend build
+
+  ci-ok:
+    # Single required status check for branch protection. Skipped jobs pass; failed or cancelled jobs fail.
+    name: ci-ok (frontend)
+    needs: [changes, check]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needs results: $RESULTS"
+          if [[ " $RESULTS " == *" failure "* || " $RESULTS " == *" cancelled "* ]]; then
+            exit 1
+          fi

@@ -1,0 +1,175 @@
+# Backend CI: lint, tests with coverage gate, vulnerability scan.
+#
+# Pull requests always start this workflow so that the required `ci-ok (backend)` check is reported on
+# every PR. The `changes` job decides whether the heavy jobs run; when nothing under backend/ changed they
+# are skipped and ci-ok passes. A workflow-level `paths:` filter on pull_request would leave the required
+# check pending forever on PRs that do not touch backend/. Pushes to main use a plain paths filter.
+name: backend
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ $EVENT != pull_request ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          if grep -qE '^(backend/|\.github/workflows/backend\.yml$)' <<<"$files"; then
+            run=true
+          else
+            run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "backend changed: $run"
+
+  lint:
+    name: lint
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Must match github.com/golangci/golangci-lint/v2 in backend/tools/go.mod (checked below).
+      GOLANGCI_LINT_VERSION: v2.13.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: |
+            backend/go.mod
+            backend/tools/go.sum
+      - name: golangci-lint version matches tools/go.mod
+        run: |
+          pinned=$(awk '$1 == "github.com/golangci/golangci-lint/v2" { print $2 }' backend/tools/go.mod)
+          if [[ $pinned != "$GOLANGCI_LINT_VERSION" ]]; then
+            echo "::error::GOLANGCI_LINT_VERSION=$GOLANGCI_LINT_VERSION but backend/tools/go.mod pins $pinned"
+            exit 1
+          fi
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          working-directory: backend
+      - name: gofumpt
+        run: make -C backend fmt-check
+
+  test:
+    name: test
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.mod
+      - name: Test (race, shuffle, coverage)
+        run: make -C backend test
+      - name: HTML coverage report
+        working-directory: backend
+        run: go tool cover -html=coverage.out -o coverage.html
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage.out
+            backend/coverage.html
+          if-no-files-found: error
+          retention-days: 14
+      - name: Coverage summary
+        working-directory: backend
+        run: |
+          module=$(go list -m)
+          {
+            echo "### Backend coverage"
+            echo
+            echo "| Package | Statements | Covered | Coverage |"
+            echo "|---|---:|---:|---:|"
+            awk -v mod="$module/" '
+              NR == 1 { next }
+              {
+                split($1, loc, ":"); pkg = loc[1]; sub(/\/[^\/]*$/, "", pkg); sub("^" mod, "", pkg)
+                stmts[pkg] += $2
+                if ($3 > 0) cov[pkg] += $2
+              }
+              END { for (p in stmts) printf "| `%s` | %d | %d | %.1f%% |\n", p, stmts[p], cov[p], 100 * cov[p] / stmts[p] }
+            ' coverage.out | sort
+            echo "| **total** | | | **$(go tool cover -func=coverage.out | awk '/^total:/ { print $NF }')** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Coverage gate
+        run: make -C backend coverage-check
+
+  vuln:
+    name: vuln
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: |
+            backend/go.mod
+            backend/tools/go.sum
+      - name: govulncheck
+        run: make -C backend vuln
+
+  ci-ok:
+    # Single required status check for branch protection. Skipped jobs pass; failed or cancelled jobs fail.
+    name: ci-ok (backend)
+    needs: [changes, lint, test, vuln]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needs results: $RESULTS"
+          if [[ " $RESULTS " == *" failure "* || " $RESULTS " == *" cancelled "* ]]; then
+            exit 1
+          fi
