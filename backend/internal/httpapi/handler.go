@@ -9,12 +9,17 @@ import (
 	"github.com/isasumer/go-react-calculator/backend/internal/observability"
 )
 
+// unknownOperation is the calc_operations_total operation label for a
+// request that never named an operation the registry knows.
+const unknownOperation calc.Operation = "unknown"
+
 // Handler serves the calculator API. Build it with [NewHandler].
 type Handler struct {
-	calc  *calc.Registry
-	log   *slog.Logger
-	ready func() bool
-	build observability.BuildInfo
+	calc    *calc.Registry
+	log     *slog.Logger
+	ready   func() bool
+	build   observability.BuildInfo
+	metrics *observability.Metrics
 }
 
 // An Option overrides a Handler default. Options exist for what the
@@ -37,6 +42,13 @@ func WithReadiness(isReady func() bool) Option {
 // [observability.Build].
 func WithBuildInfo(b observability.BuildInfo) Option {
 	return func(h *Handler) { h.build = b }
+}
+
+// WithMetrics records every calculation in m and mounts m's exposition at
+// GET /metrics. Without it the handler serves no /metrics route and counts
+// nothing, which is what a test that only cares about the API wants.
+func WithMetrics(m *observability.Metrics) Option {
+	return func(h *Handler) { h.metrics = m }
 }
 
 // NewHandler returns a Handler evaluating with reg. A nil log discards
@@ -76,32 +88,71 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/readyz", h.methodNotAllowed(http.MethodGet, http.MethodHead))
 	mux.HandleFunc("GET /version", h.version)
 	mux.HandleFunc("/version", h.methodNotAllowed(http.MethodGet, http.MethodHead))
+	if h.metrics != nil {
+		mux.Handle("GET /metrics", h.exposeMetrics())
+		mux.HandleFunc("/metrics", h.methodNotAllowed(http.MethodGet, http.MethodHead))
+	}
 	mux.HandleFunc("/", h.notFound)
 	return mux
 }
 
+// calculate answers the one endpoint that does arithmetic, and records the
+// outcome. The work is in evaluate so there is a single place where an
+// attempt is finished, and therefore a single record call.
 func (h *Handler) calculate(w http.ResponseWriter, r *http.Request) {
+	op, resp, problem := h.evaluate(w, r)
+	h.record(op, problem)
+	if problem != nil {
+		Write(w, r, problem)
+		return
+	}
+	h.writeJSON(w, r, http.StatusOK, resp)
+}
+
+// evaluate runs the request through decode, validate and the calculator. It
+// returns the operation the request asked for — empty until validation has
+// confirmed the registry knows it — and either a response or the problem to
+// send instead.
+func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) (calc.Operation, CalculateResponse, *Problem) {
 	req, err := decodeJSON[CalculateRequest](w, r)
 	if err != nil {
-		Write(w, r, h.mapError(err))
-		return
+		return "", CalculateResponse{}, h.mapError(err)
 	}
 	spec, err := h.validate(req)
 	if err != nil {
-		Write(w, r, h.mapError(err))
-		return
+		return "", CalculateResponse{}, h.mapError(err)
 	}
 	result, err := h.calc.Evaluate(spec.Name, *req.A, req.B)
 	if err != nil {
-		Write(w, r, h.mapError(&evalError{op: spec.Name, err: err}))
-		return
+		return spec.Name, CalculateResponse{}, h.mapError(&evalError{op: spec.Name, err: err})
 	}
-	h.writeJSON(w, r, http.StatusOK, CalculateResponse{
+	return spec.Name, CalculateResponse{
 		Operation: string(spec.Name),
 		A:         *req.A,
 		B:         req.B,
 		Result:    result,
-	})
+	}, nil
+}
+
+// record counts one attempted calculation: outcome "ok", or the stable code
+// of the problem it failed with.
+//
+// An operation the registry never recognized is counted as
+// [unknownOperation] rather than as whatever string the client sent. The
+// label would otherwise be attacker-controlled, and one request per made-up
+// operation name is one time series per made-up operation name.
+func (h *Handler) record(op calc.Operation, problem *Problem) {
+	if h.metrics == nil {
+		return
+	}
+	outcome := observability.OutcomeOK
+	if problem != nil {
+		outcome = string(problem.Code)
+	}
+	if op == "" {
+		op = unknownOperation
+	}
+	h.metrics.ObserveCalculation(string(op), outcome)
 }
 
 func (h *Handler) operations(w http.ResponseWriter, r *http.Request) {

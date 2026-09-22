@@ -16,8 +16,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/isasumer/go-react-calculator/backend/internal/config"
+	"github.com/isasumer/go-react-calculator/backend/internal/observability"
 )
+
+// newTestMetrics gives a test its own registry, so nothing it asserts can
+// have been recorded by another one.
+func newTestMetrics(t *testing.T) *observability.Metrics {
+	t.Helper()
+	return observability.NewMetrics(prometheus.NewRegistry(), observability.BuildInfo{
+		Version: "v0.0.0-test", Commit: "testing",
+	})
+}
+
+// exposition renders m the way GET /metrics does, so a test can assert on
+// the text an operator would actually see.
+func exposition(t *testing.T, m *observability.Metrics) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rendering metrics = %d, want 200", rec.Code)
+	}
+	return rec.Body.String()
+}
 
 // envFunc turns a map into the getenv run() reads its configuration from.
 // A map beats t.Setenv here: it leaves the process environment alone, so the
@@ -222,7 +246,8 @@ func TestChain(t *testing.T) {
 	}))
 
 	var out safeBuffer
-	h := chain(router, cfg, newLogger(&out, config.Config{LogFormat: config.FormatJSON, LogLevel: slog.LevelDebug}))
+	metrics := newTestMetrics(t)
+	h := chain(router, cfg, newLogger(&out, config.Config{LogFormat: config.FormatJSON, LogLevel: slog.LevelDebug}), metrics)
 
 	do := func(method, path string, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -344,6 +369,124 @@ func TestChain(t *testing.T) {
 	}
 	if access != 4 || panics != 1 {
 		t.Errorf("%d access lines and %d panic lines, want 4 and 1:\n%s", access, panics, out.String())
+	}
+
+	// The metrics slot is filled, and its position in the chain is visible
+	// in the labels: the route is the pattern the router matched, and what
+	// the layers above the slot answered was never counted.
+	t.Run("metrics see the router's route and nothing above it", func(t *testing.T) {
+		got := exposition(t, metrics)
+		for _, want := range []string{
+			`http_requests_total{method="POST",route="/api/v1/calculate",status="200"} 1`,
+			`http_request_duration_seconds_count{method="POST",route="/api/v1/calculate"} 1`,
+			"http_in_flight_requests 0",
+			`build_info{commit="testing",version="v0.0.0-test"} 1`,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("exposition is missing %q", want)
+			}
+		}
+		// What the layers above the slot answered themselves is not here.
+		// /slow deliberately is not asserted either way: the timeout
+		// answers the client, but the handler keeps running and is observed
+		// whenever it finally returns, which races this assertion. See the
+		// middleware test and ADR-0006 for what that costs.
+		for _, unwanted := range []string{
+			`status="429"`,       // the rate limiter is outside the slot
+			`status="204"`,       // so is the CORS preflight
+			`route="/boom"`,      // the panic unwound past the slot
+			"/api/v1/calculate?", // a raw target never becomes a label
+		} {
+			if strings.Contains(got, unwanted) {
+				t.Errorf("exposition should not contain %q:\n%s", unwanted, got)
+			}
+		}
+	})
+}
+
+// TestRunExposesMetrics is the endpoint as a scraper meets it: the real
+// binary, on its real listener, after real traffic. It is the one place the
+// whole wiring — registry, middleware, handler, route — is exercised at once.
+func TestRunExposesMetrics(t *testing.T) {
+	env := map[string]string{
+		"HOST":       "127.0.0.1",
+		"PORT":       "0",
+		"LOG_FORMAT": "json",
+		"LOG_LEVEL":  "info",
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	out := &safeBuffer{}
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, []string{"server"}, envFunc(env), out) }()
+
+	addr, _ := waitForLog(t, out, "listening")["addr"].(string)
+	base := "http://" + addr
+	client := probeClient()
+
+	// One calculation that works and one that does not, so both outcomes of
+	// calc_operations_total have something in them.
+	for _, body := range []string{
+		`{"operation":"add","a":1,"b":2}`,
+		`{"operation":"divide","a":1,"b":0}`,
+	} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/api/v1/calculate", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", body, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+"/metrics", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /metrics = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain…", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+	scraped := string(body)
+	for _, want := range []string{
+		`http_requests_total{method="POST",route="/api/v1/calculate",status="200"} 1`,
+		`http_requests_total{method="POST",route="/api/v1/calculate",status="422"} 1`,
+		`calc_operations_total{operation="add",outcome="ok"} 1`,
+		`calc_operations_total{operation="divide",outcome="DIVISION_BY_ZERO"} 1`,
+		"http_request_duration_seconds_bucket",
+		"http_in_flight_requests 1", // this scrape is itself in flight
+		"build_info{",
+		"go_goroutines",              // the Go collector
+		"process_start_time_seconds", // the process collector
+	} {
+		if !strings.Contains(scraped, want) {
+			t.Errorf("scrape is missing %q", want)
+		}
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("run = %v, want nil", err)
 	}
 }
 

@@ -1,7 +1,7 @@
 // Command server is the calculator API's composition root: it resolves the
 // configuration from the environment, builds the logger, the operations
 // registry, the HTTP handler and the middleware chain around it, serves them,
-// and drains cleanly on a signal. Metrics are wired in B1-05.
+// and drains cleanly on a signal.
 package main
 
 import (
@@ -63,16 +63,21 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	}
 	logger := newLogger(stdout, cfg)
 
+	// One registry for the process, owned here and passed down: no package
+	// touches a global registerer, and a test builds its own.
+	metrics := observability.NewMetrics(observability.NewRegistry(), build)
+
 	// The readiness flag is owned by the lifecycle below: the probe reports
 	// not-ready from the moment shutdown starts, before the listener closes.
 	var ready atomic.Bool
 	handler := httpapi.NewHandler(calc.NewRegistry(), logger,
 		httpapi.WithReadiness(ready.Load),
 		httpapi.WithBuildInfo(build),
+		httpapi.WithMetrics(metrics),
 	)
 
 	srv := &http.Server{
-		Handler:           chain(handler.Routes(), cfg, logger),
+		Handler:           chain(handler.Routes(), cfg, logger, metrics),
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -115,14 +120,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 // request travels, and it is the whole reason middleware.Chain takes a list
 // instead of being a pile of nested calls: this is the one place the request
 // lifecycle is written down, so it can be read.
-func chain(router http.Handler, cfg config.Config, logger *slog.Logger) http.Handler {
-	// metrics is the slot the Prometheus middleware (B1-05) fills: inside
-	// the rate limiter, so a rejected request costs no observation, and
-	// outside the router, so it sees the matched route pattern rather than
-	// the raw path. Chain skips a nil entry, so the position is declared
-	// here rather than described in a comment someone has to find.
-	var metrics middleware.Middleware
-
+func chain(router http.Handler, cfg config.Config, logger *slog.Logger, metrics *observability.Metrics) http.Handler {
 	return middleware.Chain(router,
 		middleware.Recover(logger),
 		middleware.RequestID(),
@@ -135,7 +133,11 @@ func chain(router http.Handler, cfg config.Config, logger *slog.Logger) http.Han
 			Burst:             cfg.RateLimitBurst,
 			TrustProxyHeaders: cfg.TrustProxyHeaders,
 		}),
-		metrics,
+		// Innermost, between the rate limiter and the router: a rejected
+		// request costs no observation, and the route label is the pattern
+		// the router matched rather than the raw path. Chain skips a nil
+		// entry, so a caller without metrics still gets a working chain.
+		middleware.Metrics(metrics),
 	)
 }
 

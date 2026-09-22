@@ -38,3 +38,24 @@ func (h *Handler) version(w http.ResponseWriter, r *http.Request) {
 		GoVersion: h.build.GoVersion,
 	})
 }
+
+// exposeMetrics is GET /metrics: the Prometheus exposition of the registry
+// the composition root built, on the same listener as the API. It is
+// registered only when [WithMetrics] supplied one.
+//
+// no-store for the same reason as the probes, and a sharper one: the body is
+// a snapshot of this process at this instant. A cached copy would make a
+// scraper compute rates from counters that never moved, which looks exactly
+// like a healthy service doing nothing.
+//
+// Exposing it on the API's own port means anyone who can reach the API can
+// read the metric names and their labels. Nothing here is a secret, and the
+// ingress only publishes /api/ (ADR-0009); a separate admin listener is
+// follow-up #38.
+func (h *Handler) exposeMetrics() http.Handler {
+	exposition := h.metrics.Handler()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", noStore)
+		exposition.ServeHTTP(w, r)
+	})
+}

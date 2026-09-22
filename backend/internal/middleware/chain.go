@@ -14,9 +14,9 @@ type Middleware func(http.Handler) http.Handler
 //
 // is Recover → RequestID → Logger → router.
 //
-// A nil entry is skipped. That is what keeps a slot in the chain honest: the
-// composition root can declare where the metrics middleware (B1-05) goes
-// before it exists, instead of leaving the position to a comment.
+// A nil entry is skipped, so a layer that is not configured — [Metrics]
+// without a registry, say — is left out by passing nil rather than by
+// rebuilding the list, and the order stays one readable expression.
 func Chain(h http.Handler, mws ...Middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		if mws[i] != nil {
@@ -29,8 +29,9 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 // operationalPaths are the endpoints the platform calls, not API clients.
 // They are logged at debug and never rate limited: a probe throttled because
 // a client is hammering the API would take a healthy instance out of rotation
-// exactly when it is busiest. /metrics is listed ahead of B1-05 so the
-// scraper is covered the moment the endpoint exists.
+// exactly when it is busiest. /metrics is here for the same reason: a scrape
+// that is throttled is a gap in the graph precisely during the traffic spike
+// the graph exists to show.
 var operationalPaths = map[string]bool{
 	"/healthz": true,
 	"/readyz":  true,
