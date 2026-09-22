@@ -1,0 +1,142 @@
+# Stack CI: build both images and smoke-test the composed stack the way a
+# reviewer runs it locally (`make up && make smoke`).
+#
+# Same shape as backend.yml/frontend.yml: pull requests always start the
+# workflow so `ci-ok (stack)` reports on every PR, and the `changes` job
+# decides whether the expensive build runs. A workflow-level `paths:` filter
+# on pull_request would leave the check pending forever on unrelated PRs,
+# which matters the day this check becomes required. Pushes to main use a
+# plain paths filter.
+name: stack
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "compose.yaml"
+      - "scripts/**"
+      - ".github/workflows/stack.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ $EVENT != pull_request ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[].filename')
+          if grep -qE '^(backend/|frontend/|scripts/|compose\.yaml$|\.github/workflows/stack\.yml$)' <<<"$files"; then
+            run=true
+          else
+            run=false
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "stack changed: $run"
+
+  smoke:
+    name: smoke
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Bake reads compose.yaml's build sections, so CI builds exactly the
+      # images `docker compose up --build` would, with a layer cache per
+      # image. `load: true` puts them in the daemon for compose to run.
+      - uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7.4.0
+        with:
+          files: compose.yaml
+          targets: backend,frontend
+          load: true
+          set: |
+            backend.cache-from=type=gha,scope=stack-backend
+            backend.cache-to=type=gha,mode=max,scope=stack-backend
+            frontend.cache-from=type=gha,scope=stack-frontend
+            frontend.cache-to=type=gha,mode=max,scope=stack-frontend
+
+      - name: Image sizes
+        run: |
+          # One repository argument per invocation (docker 29), so filter instead.
+          sizes=$(docker image ls --filter 'reference=go-react-calculator-*' \
+            --format 'table {{.Repository}}\t{{.Tag}}\t{{.Size}}')
+          echo "$sizes"
+          {
+            echo "### Image sizes"
+            echo
+            echo '```'
+            echo "$sizes"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start the stack
+        run: docker compose up -d --wait --wait-timeout 120 --no-build
+
+      - name: Smoke test
+        run: ./scripts/smoke.sh
+
+      - name: Container hardening
+        run: |
+          for c in $(docker compose ps -q); do
+            docker inspect "$c" --format \
+              '{{.Name}} user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} capDrop={{.HostConfig.CapDrop}} securityOpt={{.HostConfig.SecurityOpt}} health={{json .Config.Healthcheck.Test}}'
+          done
+
+      - name: Compose logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: docker compose down --remove-orphans --volumes
+
+  ci-ok:
+    # Single aggregate status for this workflow. Skipped jobs pass; failed or
+    # cancelled jobs fail.
+    name: ci-ok (stack)
+    needs: [changes, smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "needs results: $RESULTS"
+          if [[ " $RESULTS " == *" failure "* || " $RESULTS " == *" cancelled "* ]]; then
+            exit 1
+          fi

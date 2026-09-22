@@ -48,14 +48,20 @@ dev: ## Run backend and frontend dev servers (Ctrl-C stops both)
 	  wait
 
 .PHONY: up
-up: ## Build and start the full stack with Docker Compose (H3-03)
-	@test -f compose.yaml || { echo "error: compose.yaml does not exist yet — it is delivered by ticket H3-03"; exit 1; }
+up: ## Build and start the full stack with Docker Compose, waiting until healthy
 	docker compose up --build --wait
 
 .PHONY: down
-down: ## Stop the compose stack
-	@test -f compose.yaml || { echo "error: compose.yaml does not exist yet — it is delivered by ticket H3-03"; exit 1; }
-	docker compose down --remove-orphans
+down: ## Stop the compose stack and remove its volumes
+	docker compose down --remove-orphans --volumes
+
+.PHONY: logs
+logs: ## Follow the compose stack's logs (Ctrl-C stops following, not the stack)
+	docker compose logs --follow --tail 100
+
+.PHONY: smoke
+smoke: ## Assert the running stack behaves (start it first with `make up`)
+	./scripts/smoke.sh
 
 .PHONY: e2e
 e2e: ## Run Playwright end-to-end tests against the compose stack (H3-04)

@@ -1,0 +1,9 @@
+# Everything the build context does not need. Keeping it small speeds the
+# context upload up and — more importantly — stops local build output or
+# secrets from ever reaching a layer.
+*
+!go.mod
+!go.sum
+!api/
+!cmd/
+!internal/

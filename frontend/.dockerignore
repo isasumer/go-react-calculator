@@ -1,0 +1,14 @@
+# Keep the build context to the sources Vite actually compiles: node_modules
+# is reinstalled from the lockfile inside the image (a host install may carry
+# the wrong platform's binaries), and dist/ is rebuilt.
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
+Makefile
+README.md
+*.log

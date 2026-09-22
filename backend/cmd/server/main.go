@@ -49,12 +49,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout 
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	fs.SetOutput(stdout)
 	printVersion := fs.Bool("version", false, "print build information and exit")
+	probe := fs.Bool("healthcheck", false, "probe the local /readyz endpoint and exit 0 when ready")
 	if err := fs.Parse(args[1:]); err != nil {
 		return fmt.Errorf("parse flags: %w", err)
 	}
 	if *printVersion {
 		_, err := fmt.Fprintf(stdout, "server %s\n", build)
 		return err
+	}
+	// The probe is its own tiny program sharing the binary: the distroless
+	// image has no shell and no curl, so Docker's HEALTHCHECK runs this. It
+	// deliberately runs before config.Load — a probe must not fail for a
+	// reason unrelated to the running server's readiness.
+	if *probe {
+		return healthcheck(ctx, healthcheckURL(getenv))
 	}
 
 	cfg, err := config.Load(getenv)

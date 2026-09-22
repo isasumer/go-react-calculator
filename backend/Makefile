@@ -75,6 +75,21 @@ build: ## Build the server binary into ./bin/server with version info
 run: ## Run the server (PORT=9000 make run to change the port)
 	go run ./cmd/server
 
+IMAGE ?= go-react-calculator-backend:dev
+
+.PHONY: docker-build
+docker-build: ## Build the distroless image, stamped with the same build info as `make build`
+	docker build \
+	  --build-arg VERSION=$(VERSION) \
+	  --build-arg COMMIT=$(COMMIT) \
+	  --build-arg BUILD_DATE=$(DATE) \
+	  -t $(IMAGE) .
+
+.PHONY: docker-run
+docker-run: docker-build ## Run the image on http://localhost:8081 (Ctrl-C stops it)
+	docker run --rm -p 8081:8081 --read-only --cap-drop ALL \
+	  --security-opt no-new-privileges:true $(IMAGE)
+
 .PHONY: check
 check: fmt-check lint vet test coverage-check ## Every gate: format, lint, vet, tests, coverage threshold
 
