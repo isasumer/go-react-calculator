@@ -1,6 +1,6 @@
-// Command server is the calculator API's composition root. For now it is a
-// placeholder that answers 404 to every request; routes arrive in B1-02 and
-// configuration and lifecycle hardening in B1-03.
+// Command server is the calculator API's composition root: it builds the
+// operations registry and the HTTP handler and serves them. Configuration and
+// lifecycle hardening arrive in B1-03, middleware in B1-04.
 package main
 
 import (
@@ -16,6 +16,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/isasumer/go-react-calculator/backend/internal/calc"
+	"github.com/isasumer/go-react-calculator/backend/internal/httpapi"
 )
 
 // Build information, set at link time via -ldflags "-X main.version=…".
@@ -61,7 +64,7 @@ func run(ctx context.Context, args []string, _ func(string) string, stdout io.Wr
 	}
 
 	srv := &http.Server{
-		Handler:           http.NotFoundHandler(),
+		Handler:           httpapi.NewHandler(calc.NewRegistry(), logger).Routes(),
 		ReadHeaderTimeout: readHeaderTimeout,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

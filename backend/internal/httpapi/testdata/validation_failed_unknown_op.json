@@ -1,0 +1,15 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#validation_failed",
+  "title": "Validation failed",
+  "status": 400,
+  "detail": "missing or invalid fields: a",
+  "code": "VALIDATION_FAILED",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736",
+  "errors": [
+    {
+      "field": "a",
+      "message": "is required"
+    }
+  ]
+}

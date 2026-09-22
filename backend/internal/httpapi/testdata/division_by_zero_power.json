@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#division_by_zero",
+  "title": "Division by zero",
+  "status": 422,
+  "detail": "operation \"power\" divides by zero for these operands",
+  "code": "DIVISION_BY_ZERO",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

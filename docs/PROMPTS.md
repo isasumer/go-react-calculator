@@ -247,3 +247,62 @@ Accepted.
 
 **Written by hand** — None; every file was generated, read, and run locally (`make -C backend check`, the
 10 s fuzz run, the benchmark) before commit.
+
+## Session B1-02 — 2026-09-22
+
+1. Task prompt (verbatim; written in English):
+
+   ```text
+   Implement GitHub issue #6 (B1-02: HTTP transport internal/httpapi) in this repository. Prerequisite #5 is merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 6`, then docs/PLAN.md §1.4 (the frozen API contract — every row there is a test case), docs/errors.md, docs/adr/README.md, and the public API of backend/internal/calc (go doc ./internal/calc). Do not explore beyond backend/internal/httpapi, backend/internal/calc (read-only), backend/cmd/server (wiring only) and docs.
+
+   Constraints for this ticket:
+   - Standard library only. Router is http.NewServeMux with Go 1.22+ method patterns: `POST /api/v1/calculate`, `GET /api/v1/operations`. Wrong method → 405 problem with an Allow header; unknown route → 404 problem. Do not add /healthz, /readyz, /version or middleware — those are #7 and #8.
+   - Handler is a struct with injected dependencies (`Handler{calc *calc.Registry, log *slog.Logger}`), exposing `Routes() http.Handler`. No package-level globals. Handlers stay thin: decode → validate → calc.Evaluate → encode; business rules live in calc.
+   - DTOs: CalculateRequest{Operation string; A *float64; B *float64} with pointers so "missing" and "zero" are distinguishable; CalculateResponse{Operation, A, B (omitted for unary), Result}; OperationsResponse listing name, symbol, arity from the registry.
+   - Decoding: require Content-Type application/json (415 UNSUPPORTED_MEDIA_TYPE); http.MaxBytesReader at 4 KiB (413 PAYLOAD_TOO_LARGE); json.Decoder with DisallowUnknownFields; reject trailing data after the first JSON value; empty body, non-object body, wrong field types → 400 INVALID_BODY with a detail derived from the json error (field name / offset), never the raw Go error text.
+   - Validation producing errors[] {field, message}: missing operation/a/b → 400 VALIDATION_FAILED; unknown operation → 422 UNSUPPORTED_OPERATION; b supplied to a unary operation → 422 UNEXPECTED_OPERAND; non-finite inputs guarded even though JSON cannot carry them.
+   - Error mapping via errors.Is/As in a single mapError(err) Problem function with its own table test: calc.ErrDivisionByZero → 422 DIVISION_BY_ZERO, ErrDomain → 422 DOMAIN_ERROR, ErrNotFinite → 422 RESULT_NOT_FINITE, anything else → 500 INTERNAL with a generic detail (no leak) and an error log line.
+   - Problem type: struct with type, title, status, detail, code, instance, requestId (read from an `X-Request-ID` response header if already set, empty otherwise — #8 will populate it), errors[]; Write(w, r, p) sets Content-Type application/problem+json. The `type` URL is the docs/errors.md anchor for the code.
+   - writeJSON helper sets `application/json; charset=utf-8`, encodes to a buffer first so encode errors become a 500 rather than a half-written body.
+   - Tests: handler_test.go table over request → status/code/body covering every row of PLAN §1.4 plus 405, 404, 415, 413, unknown field, trailing garbage, empty body, array body, string-typed number; problem_test.go; golden files under testdata/*.json for every problem body, and the golden files must be byte-identical to the examples you put in docs/errors.md. Coverage ≥ 90 % on internal/httpapi.
+   - Wire Routes() into cmd/server run() replacing the placeholder 404 handler; keep the existing run() smoke test green.
+   - Docs: fill the table in docs/errors.md (code, HTTP status, meaning, client behaviour, example) for every code above; write docs/adr/0004-single-calculate-endpoint.md and docs/adr/0005-problem-json-errors.md from the template and flip both rows in docs/adr/README.md to Accepted.
+
+   Finish by: running `make -C backend check` and pasting the output (including the per-package coverage line) into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session B1-02 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #6; opening the PR with `gh pr create` using the PR title from the issue and `Closes #6`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — `backend/internal/httpapi`: `Handler{calc, log}` built by `NewHandler`, with `Routes()` on a
+`http.ServeMux` using method patterns. Wrong methods are caught by method-less fallback patterns for the same
+paths, which return a 405 problem with `Allow`; `/` catches unknown paths and returns a 404 problem. The
+mux's own 405/404 responses are plain text, so they are never used. DTOs use pointer operands. `decodeJSON`
+enforces the media type, the 4 KiB `MaxBytesReader`, `DisallowUnknownFields`, a single value, and an object
+rather than `null`, and maps each decoder error to a detail naming the field or byte offset. `validate`
+lists every missing or non-finite field in one 400, then returns 422 for an unknown operation or an unexpected
+`b`. `mapError` is the single error-to-problem mapping (`errors.Is` on the calc sentinels, `errors.AsType`
+for `*Problem` and the operation context). `writeJSON` marshals to memory first and sets `Content-Length`.
+Tests: a 37-case route table with golden files for every problem body (26 files), a `mapError` table (with no-leak and log
+assertions), `Write`/`NewProblem` tables, and `TestErrorCatalogueMatchesGoldenFiles`, which fails when
+docs/errors.md drifts from `testdata/`. Coverage is 96.4 %. `cmd/server` now serves `Routes()`, and its smoke
+test also asserts the 404 is `application/problem+json`. docs/errors.md is filled (table, shape, one example
+per code), ADR-0004 and ADR-0005 are written, and both README rows are Accepted. The table caught one real
+bug before commit: for `{…}{}`, the trailing-data check passed a `nil` error to `decodeProblem` and panicked.
+
+**Rejected (why)**
+- `mapError(err) Problem` as a free function returning a value → implemented as `(h *Handler) mapError(err)
+  *Problem`. The 500 branch must log through the injected logger (no globals). `*Problem` implements `error`,
+  so decode and validation failures pass through the same single mapping point.
+- `errors[]` "pointing at /a" (PLAN §1.4 wording) as a JSON Pointer → `field: "a"`, matching the contract's
+  own problem example (`field: "b"`) and the VALIDATION_FAILED errors.
+- `requestId` as an empty string when no header is set → omitted (`omitempty`), so a problem never claims an
+  empty ID. The golden files set `X-Request-ID` the way B1-04's middleware will, so the docs show the field.
+- An unexported `Write`/codes → exported (`Write`, `NewProblem`, `Code*`) because B1-04's recovery, timeout
+  and rate-limit middleware must emit the same shape.
+- Working around `encoding/json`'s case-insensitive key matching (`{"A":1}` is accepted) → outside the
+  contract and needs a design choice (json/v2 or a key pre-scan); filed as follow-up #60.
+- Field-specific detail for every DIVISION_BY_ZERO → only `divide` gets "b must be non-zero" (the contract's
+  example). `power` with `0^-n` gets a generic detail, so the transport does not reimplement calc's rules.
+
+**Written by hand** — None. Every file was generated, read, and run locally (`make -C backend check`, plus
+the built binary exercised with curl) before commit.
