@@ -1,0 +1,14 @@
+# Overlay for running the Playwright suite (H3-04) against the compose stack:
+#
+#   docker compose -f compose.yaml -f compose.e2e.yaml up --build --wait
+#
+# The default token bucket (RATE_LIMIT_RPS=20, RATE_LIMIT_BURST=40 — see backend/README.md
+# Configuration) is sized for one real client, not a test suite hammering the same origin from a
+# shared IP as fast as a browser can click. Raising it here — instead of in compose.yaml — keeps
+# the shipped defaults exactly what a production deployment gets; only the e2e run asks for more
+# headroom, and it asks for it explicitly.
+services:
+  backend:
+    environment:
+      RATE_LIMIT_RPS: "200"
+      RATE_LIMIT_BURST: "400"
