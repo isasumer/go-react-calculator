@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#timeout",
+  "title": "Request timeout",
+  "status": 503,
+  "detail": "the server took too long to produce a response",
+  "code": "TIMEOUT",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

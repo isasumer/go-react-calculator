@@ -17,7 +17,9 @@ Clients branch on `code`, never on `title` or `detail`: those are for humans and
 | `PAYLOAD_TOO_LARGE` | 413 | The body exceeds 4096 bytes. | Bug in the client: a calculate request is well under 100 bytes. | [example](#payload_too_large) |
 | `NOT_FOUND` | 404 | No route matches the path. | Bug in the client: check the base URL and API version. | [example](#not_found) |
 | `METHOD_NOT_ALLOWED` | 405 | The path exists but not for this method. The `Allow` response header lists the methods that are allowed. | Bug in the client: use a method from `Allow`. | [example](#method_not_allowed) |
-| `INTERNAL` | 500 | An unexpected server error. `detail` is deliberately generic; the cause is logged server-side with the same `requestId`. | Show a generic error and allow a retry; report the `requestId` if it persists. | [example](#internal) |
+| `RATE_LIMITED` | 429 | The client went over its per-client token bucket (`RATE_LIMIT_RPS` sustained, `RATE_LIMIT_BURST` back to back). The limit is per server process and keyed on the client's address. | Back off for the whole number of seconds in the `Retry-After` header, then retry. Never retry in a tight loop. | [example](#rate_limited) |
+| `INTERNAL` | 500 | An unexpected server error, including a panic caught by the recovery middleware. `detail` is deliberately generic; the cause is logged server-side with the same `requestId`. | Show a generic error and allow a retry; report the `requestId` if it persists. | [example](#internal) |
+| `TIMEOUT` | 503 | The request took longer than the server's per-request budget (`REQUEST_TIMEOUT`) and was abandoned; the handler's context was canceled with it. | Retry with backoff. A calculation has no side effects, so a retry is always safe. | [example](#timeout) |
 | `NOT_READY` | 503 | `GET /readyz` only: the process has started shutting down and is draining its in-flight requests. Operational, never returned by an `/api/v1` route. | Platform concern: a load balancer takes the instance out of rotation and retries elsewhere. | [example](#not_ready) |
 
 ## Shape
@@ -338,9 +340,43 @@ Response (`405`, `application/problem+json`):
 }
 ```
 
+### RATE_LIMITED
+
+Each client gets a token bucket of `RATE_LIMIT_BURST` tokens refilling at `RATE_LIMIT_RPS` per second. A
+request that finds the bucket empty is refused here, before the router: the operational endpoints
+(`/healthz`, `/readyz`, `/metrics`) are never rate limited, because throttling a probe would take a healthy
+instance out of rotation exactly when it is busiest.
+
+`Retry-After` is whole seconds and at least `1`.
+
+Request (the 21st in a second, with the default limits):
+
+```http
+POST /api/v1/calculate
+Content-Type: application/json
+
+{"operation":"add","a":1,"b":2}
+```
+
+Response (`429`, `application/problem+json`, `Retry-After: 1`):
+
+```json
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#rate_limited",
+  "title": "Too many requests",
+  "status": 429,
+  "detail": "too many requests; wait for the time in the Retry-After header and try again",
+  "code": "RATE_LIMITED",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}
+```
+
 ### INTERNAL
 
-Not reachable through a valid request; produced for any error the service did not anticipate. Response (`500`, `application/problem+json`):
+Not reachable through a valid request; produced for any error the service did not anticipate, and for a
+panic the recovery middleware caught. The panic value and its stack go to the log at error level under this
+same `requestId`; none of it reaches the client. Response (`500`, `application/problem+json`):
 
 ```json
 {
@@ -349,6 +385,37 @@ Not reachable through a valid request; produced for any error the service did no
   "status": 500,
   "detail": "an unexpected error occurred",
   "code": "INTERNAL",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}
+```
+
+### TIMEOUT
+
+The timeout middleware gives every request `REQUEST_TIMEOUT` (default `5s`) and cancels the handler's
+context when it runs out. It is `503` rather than `504`: there is no upstream that timed out, the server
+itself declined to keep working on the request. A response that the handler had already started is left
+alone — there is no way to replace a status line that is on the wire — so this document is what a client
+sees whenever one is sent at all.
+
+Request:
+
+```http
+POST /api/v1/calculate
+Content-Type: application/json
+
+{"operation":"add","a":1,"b":2}
+```
+
+Response (`503`, `application/problem+json`):
+
+```json
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#timeout",
+  "title": "Request timeout",
+  "status": 503,
+  "detail": "the server took too long to produce a response",
+  "code": "TIMEOUT",
   "instance": "/api/v1/calculate",
   "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
 }

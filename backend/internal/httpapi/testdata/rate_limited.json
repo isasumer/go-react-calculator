@@ -1,0 +1,9 @@
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#rate_limited",
+  "title": "Too many requests",
+  "status": 429,
+  "detail": "too many requests; wait for the time in the Retry-After header and try again",
+  "code": "RATE_LIMITED",
+  "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}

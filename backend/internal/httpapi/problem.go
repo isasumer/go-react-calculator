@@ -29,6 +29,8 @@ const (
 	CodeNotFound             Code = "NOT_FOUND"
 	CodeNotReady             Code = "NOT_READY"
 	CodeMethodNotAllowed     Code = "METHOD_NOT_ALLOWED"
+	CodeRateLimited          Code = "RATE_LIMITED"
+	CodeTimeout              Code = "TIMEOUT"
 	CodeInternal             Code = "INTERNAL"
 )
 
@@ -58,6 +60,10 @@ func (c Code) meta() (status int, title string) {
 		return http.StatusNotFound, "Not found"
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed, "Method not allowed"
+	case CodeRateLimited:
+		return http.StatusTooManyRequests, "Too many requests"
+	case CodeTimeout:
+		return http.StatusServiceUnavailable, "Request timeout"
 	case CodeNotReady:
 		return http.StatusServiceUnavailable, "Not ready"
 	default:
@@ -104,12 +110,16 @@ func (p *Problem) Error() string {
 }
 
 // Write sends p as application/problem+json. Instance defaults to the request
-// path; RequestID is copied from an X-Request-ID response header when one has
-// already been set. Headers set on w before the call (such as Allow) are kept.
+// path; RequestID comes from the context the request-ID middleware populated,
+// falling back to an X-Request-ID response header already set on w. Headers
+// set on w before the call (such as Allow) are kept.
 func Write(w http.ResponseWriter, r *http.Request, p *Problem) {
 	out := *p
 	if out.Instance == "" {
 		out.Instance = r.URL.Path
+	}
+	if out.RequestID == "" {
+		out.RequestID = RequestIDFromContext(r.Context())
 	}
 	if out.RequestID == "" {
 		out.RequestID = w.Header().Get("X-Request-ID")

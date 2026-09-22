@@ -29,6 +29,8 @@ var allCodes = []Code{
 	CodePayloadTooLarge,
 	CodeNotFound,
 	CodeMethodNotAllowed,
+	CodeRateLimited,
+	CodeTimeout,
 	CodeInternal,
 	CodeNotReady,
 }
@@ -50,6 +52,8 @@ func TestNewProblem(t *testing.T) {
 		{CodePayloadTooLarge, 413, "Payload too large"},
 		{CodeNotFound, 404, "Not found"},
 		{CodeMethodNotAllowed, 405, "Method not allowed"},
+		{CodeRateLimited, 429, "Too many requests"},
+		{CodeTimeout, 503, "Request timeout"},
 		{CodeInternal, 500, "Internal server error"},
 		{CodeNotReady, 503, "Not ready"},
 		{Code("SOMETHING_NEW"), 500, "Internal server error"},
@@ -77,7 +81,8 @@ func TestWrite(t *testing.T) {
 	tests := []struct {
 		name          string
 		problem       *Problem
-		requestID     string
+		requestID     string // X-Request-ID already on the response
+		ctxRequestID  string // request ID in the request context
 		wantInstance  string
 		wantRequestID string
 		wantJSONKeys  []string
@@ -99,6 +104,15 @@ func TestWrite(t *testing.T) {
 			wantJSONKeys:  []string{"requestId", "errors"},
 		},
 		{
+			name:          "request ID from the context wins over the header",
+			problem:       NewProblem(CodeTimeout, "too slow"),
+			requestID:     "from-header",
+			ctxRequestID:  "from-context",
+			wantInstance:  "/some/path",
+			wantRequestID: "from-context",
+			wantJSONKeys:  []string{"requestId"},
+		},
+		{
 			name:         "explicit instance kept",
 			problem:      &Problem{Status: 400, Code: CodeInvalidBody, Instance: "/other"},
 			wantInstance: "/other",
@@ -106,7 +120,11 @@ func TestWrite(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/some/path?q=1", http.NoBody)
+			ctx := t.Context()
+			if tt.ctxRequestID != "" {
+				ctx = ContextWithRequestID(ctx, tt.ctxRequestID)
+			}
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/some/path?q=1", http.NoBody)
 			rec := httptest.NewRecorder()
 			rec.Header().Set("Allow", "GET")
 			if tt.requestID != "" {
