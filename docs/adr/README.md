@@ -11,5 +11,5 @@ One file per decision, numbered, never edited after acceptance except to change 
 | [0005](0005-problem-json-errors.md) | Errors as RFC 9457 problem+json with a stable machine `code` | Accepted | #6 |
 | 0006 | Runtime stack: stdlib router, `log/slog`, Prometheus client | Planned | #9 |
 | 0007 | Display precision: 12 significant digits, exponent beyond ±1e15 / 1e-6 | Planned | #17 |
-| 0008 | Frontend evaluates only through the API; immediate-execution semantics | Planned | #13 |
+| [0008](0008-frontend-evaluation-semantics.md) | Evaluate only through the API, with immediate-execution semantics | Accepted | #13 |
 | 0009 | Distroless non-root images, same-origin `/api` proxy, no CORS in production | Planned | #20 |

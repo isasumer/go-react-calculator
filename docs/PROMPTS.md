@@ -468,3 +468,81 @@ Dependencies added: `@tanstack/react-query` and `zod`, both named in ADR-0002.
 failures: `useOperations` reports `isSuccess` from the very first render because `placeholderData` counts as
 data, so those tests now wait on `isFallback`; and `statusText` is filled from the standard reason phrase, so
 the "no status text, fall back to the code as the title" case needs a non-standard status (599).
+
+## Session F2-02 — 2026-09-22
+
+Three prompts: the orchestrator's harness rules, the ticket itself, and a resume instruction after the
+session was interrupted mid-way.
+
+1. ```
+   ORCHESTRATION RULES (from the orchestrator, override nothing in CLAUDE.md, add to it):
+   - Work ONLY inside the git worktree /home/sumer/gorc-wt/issue-13. It is already on branch `frontend/13-calculator-engine`, cut from fresh origin/main (which includes #12: the API layer with useCalculate, ApiError, types and MSW handlers). Do not switch branches, do not touch /home/sumer/go-react-calculator or any other worktree.
+   - Node 22 via nvm: run `source ~/.nvm/nvm.sh && nvm use` (frontend/.nvmrc) in every shell you run.
+   - A backend session (#8) runs in parallel and will also append docs/PROMPTS.md. Never merge. Never push to main. Before opening the PR run `git fetch origin && git rebase origin/main`; if docs/PROMPTS.md conflicts, keep both sides (blank line between sessions) and continue; `git push --force-with-lease` on your own feature branch is allowed for that rebase only.
+   - Your final message must contain: the PR URL, the coverage summary from `npm run test:coverage`, anything you deliberately left out, and any follow-up issues you filed.
+   ```
+
+2. ```
+   Implement GitHub issue #13 (F2-02: Calculator engine + store) in this repository. Prerequisite #12 is merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 13`, then docs/PLAN.md §1.1, §1.2 and §1.3 (ADR-0008 row), docs/adr/0002-frontend-stack.md, frontend/README.md conventions, and the exported surface of frontend/src/lib/api.ts, frontend/src/types/calculator.ts, frontend/src/hooks/use-calculate.ts and frontend/src/lib/error-messages.ts. Do not explore beyond frontend/src/{lib,stores,types,hooks,test} and docs/adr.
+
+   Constraints for this ticket:
+   - src/lib/calculator-engine.ts is pure TypeScript: no React, no zustand, no fetch. Model: `type Phase = 'idle' | 'enteringA' | 'operatorSelected' | 'enteringB' | 'result' | 'error'`; `interface CalcState { phase; display: string; a: number | null; b: number | null; operator: BinaryOperation | null; error: string | null; lastRequest: CalculateRequest | null }`; `initialState`. Transition functions return `{ state: CalcState; effect?: { kind: 'calculate'; request: CalculateRequest } }`: inputDigit(d), inputDecimal(), toggleSign(), backspace(), clearEntry(), clearAll(), setOperator(op), requestEvaluate(), applyUnary(op: 'sqrt' | 'percent'), applyResult(response), applyError(message). Every function has an exhaustive `switch (state.phase)` with a `satisfies never` default so adding a phase fails type-check.
+   - Input rules: max 16 significant characters in the entry (ignore further digits), single decimal point, no leading zeros except "0.", "-0" normalised to "0", toggleSign on "0" is a no-op, backspace on a single char yields "0", operator pressed twice replaces the operator, operator pressed in `result` phase chains (result becomes `a`), digit pressed in `result` phase starts fresh, Enter with no `b` reuses `a` as `b` (classic behaviour, documented), any input in `error` phase first clears the error (Escape clears fully), inputs while a request is pending are the caller's responsibility (store guards them, engine does not know about pending).
+   - Evaluation semantics (write docs/adr/0008-frontend-evaluation-semantics.md from the template and flip its row in docs/adr/README.md to Accepted): immediate execution, no precedence — `2 + 3 × 4` yields 20. All arithmetic goes through the API; the engine never computes. Unary ops: `sqrt` applies to the current entry (or `a` in result/operatorSelected phase) and emits a calculate effect with arity-1 request; `percent` in `enteringB` phase emits `percent(a, b)` per the backend definition (b percent of a) and, on result, replaces the entry so the pending binary operation can continue — document this choice and its alternatives (spreadsheet-style vs calculator-style) in the ADR.
+   - src/stores/useCalculatorStore.ts: zustand store holding CalcState plus `pending: boolean`; actions mirror the engine functions; when a transition returns an effect the store sets pending, calls an injected `evaluator: (req: CalculateRequest) => Promise<CalculateResponse>` (set via `setEvaluator` from the component layer in #14, so the store is testable without React Query), then applies `applyResult` or `applyError(messageForError(e))`. While pending, all inputs except clearAll are ignored. Handle the race where clearAll happens mid-request: the stale response must be discarded (sequence number or request identity check, tested). Export selectors: selectDisplay, selectPhase, selectIsBusy, selectError, selectExpression (a human string like "12 +" for the Display's expression line).
+   - Tests: calculator-engine.test.ts as a table from-state × input → to-state covering every rule above, plus scripted sequences with expected display after each step: "12 + 7 =" → 19, "5 ÷ 0 =" → error phase with the mapped message, "9 √" → 3, "200 + 15 % =" → 230, "= = =" repeats the last operation (document), "2 + 3 × 4 =" → 20, backspace/CE/AC interactions, 16-char cap, chaining after result. Aim for 100 % branch coverage on calculator-engine.ts. useCalculatorStore.test.ts drives full calculations with a fake evaluator resolving and rejecting with ApiError (DIVISION_BY_ZERO), asserts pending flag, ignores input while pending, discards a stale response after clearAll, and verifies the expression selector.
+   - Do not render anything, do not touch main.tsx or components — that is #14 (which must also wire QueryProvider into main.tsx; mention this in your PR body so the orchestrator carries it forward).
+
+   Finish by: running `make -C frontend check` and `npm run test:coverage` and pasting the outputs into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session F2-02 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #13; opening the PR with `gh pr create` using the PR title from the issue and `Closes #13`. Do not merge. Report the PR URL.
+   ```
+
+3. ```
+   Resume issue #13 exactly where you stopped: you were interrupted by an API rate limit while writing the engine tests. The limit has reset. First run `git -C /home/sumer/gorc-wt/issue-13 status --short` and `git log --oneline -3` to see what is committed vs uncommitted, do not redo finished work, then continue the ticket to completion: calculator-engine tests, useCalculatorStore + its tests, ADR-0008 and its index row, `make -C frontend check` and `npm run test:coverage`, PROMPTS.md section, rebase on origin/main (force-with-lease on your own branch is allowed for that), tick issue #13 criteria, open the PR with `Closes #13`. Do not merge. Report the PR URL, coverage summary, anything left out and any follow-ups filed.
+   ```
+
+**Accepted** — `src/lib/calculator-engine.ts` is the whole calculator as `(state, input) => { state, effect? }`
+with no import of React, zustand or `fetch`, and no arithmetic of its own: even `x %` alone is sent as
+`percent(x, 1)`, and `±` flips the sign of the *entry string* rather than negating a number. Every
+transition is an exhaustive `switch (state.phase)` whose `default` is
+`exhausted(state.phase satisfies never, stay(state))` — the `satisfies never` and the helper's `never`
+parameter both break the build if a phase is added, and at runtime an impossible phase ignores the key
+instead of throwing, which a test asserts for all eleven transitions (that is also what keeps the
+defensive branch inside the coverage numbers). The insight that removed the extra state the ticket
+hinted at (`pendingUnary`): **while a request is in flight the phase is already the one its answer lands
+in**, so `applyResult` needs nothing else to know where the number goes — `√`/`%` on an entry land in
+`enteringA`/`enteringB` and replace the entry, a chained operator lands in `operatorSelected` and fills
+`a`, `=` lands in `result`. `lastRequest` is recorded only by `=`, which is what makes `= = =` repeat
+(19, 26, 33) without repeating a chain or a `√`. `src/stores/useCalculatorStore.ts` keeps the engine
+state under one key (`calc`) so a transition is applied atomically, guards every key but `AC` behind
+`pending`, and settles a response only if its ticket is still the current one — `AC` bumps the ticket,
+so the answer to a cleared calculation is dropped, resolved *and* rejected, both tested. 283 tests,
+`make -C frontend check` green, 100 % statements/branches/functions/lines overall and on both new files.
+Dependency added: `zustand` 5.0.15, named in ADR-0002.
+
+**Rejected (why)**
+- Computing anything locally, including `x / 100` for a bare `%` or `-x` for `±` → two implementations
+  of the same rules, and the tested one would not be the one the user runs (ADR-0008).
+- A `pendingOperator` / `pendingUnary` field on `CalcState` → the landing phase already carries that
+  information; the extra field would have been a second source of truth for the same fact.
+- `default: throw new Error("unreachable")` in the exhaustive switches → an unreachable branch is an
+  uncoverable branch, and a calculator that crashes on a key is worse than one that ignores it.
+- Context-sensitive `%` (`a × b %` → b/100) and spreadsheet `%` (always x/100) → one rule the user can
+  learn, one backend operation; both alternatives are written up in ADR-0008 with what they cost.
+- Flattening `CalcState` into the store's own state → actions and engine fields would live in one
+  object and an engine call could be handed the actions by accident.
+- Number formatting beyond `String(value)` → ADR-0007's 12-significant-digit display and
+  `format-number.ts` are F2-06's; the engine says so where it formats.
+- Keeping `lastRequest` when a digit starts a fresh calculation → `= ` then repeats an operation the
+  user has visibly left behind.
+- Wiring `QueryProvider` into `main.tsx`, rendering anything, keyboard mapping, history → #14, F2-04
+  and F2-05. Nothing outside the issue's **Files / areas** was touched (plus this file and ADR-0008,
+  which the ticket names).
+
+**Written by hand** — None. Every file was generated, read and run locally (`make -C frontend check`,
+`npm run test:coverage`) before commit. Two generated tests were wrong and were corrected after reading
+the failure and the coverage report: the 16-digit cap test forgot that the placeholder `0` in `-0.` is
+itself one of the sixteen digits, and the `state.a ?? 0` fallback in `applyUnary` needed its own row in
+the table (a `√` pressed in `operatorSelected` on a state whose `a` has not arrived yet) before the
+engine reached 100 % branch coverage.
