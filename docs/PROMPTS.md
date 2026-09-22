@@ -18,6 +18,83 @@ Format for each session:
 
 ---
 
+## How AI was used
+
+Every line of this repository was written in a **Claude Code** session. The workflow was deliberate rather
+than "ask and paste", and it is the same in all nineteen sessions logged below.
+
+**Planning.** One long session produced [`docs/PLAN.md`](PLAN.md): the read of what the assignment
+actually evaluates, the sprint structure, the frozen API contract and ~30 tickets, which were then mirrored
+1:1 as GitHub issues. Nothing was implemented in that session; its output is a document that later sessions
+obey.
+
+**Scaffolding.** Each ticket got its own session in its own git worktree, bootstrapped by
+[`CLAUDE.md`](../CLAUDE.md): read the issue, read PLAN §1–§2, read only the directories the issue lists,
+implement exactly the Scope, run `make check`, open one PR. A session never re-plans — if the plan looks
+wrong it opens a `follow-up` issue and stops. That constraint is what kept an AI that is happy to write
+anything from writing everything.
+
+**Test generation.** Tests were generated alongside the code, usually in the same pass: table-driven Go
+tests, the fuzz target, the golden problem+json files, the MSW handlers, the Playwright specs. This is
+where the model earns its keep — the tedious half of the coverage numbers in the README is AI-written and
+human-read.
+
+**Review.** The reviewer was the human plus CI, in that order. Every PR was read against the issue's
+acceptance criteria before merge, and `make check` (lint, vet, type-check, tests, coverage gates) had to be
+green. Several times the review is the entry below that says "Rejected".
+
+### Guardrails
+
+- **Every generated line was read and executed locally before it was committed.** A construct I did not
+  understand was either explained and recorded, or replaced.
+- **One issue → one branch → one PR.** Nothing outside the issue's *Files / areas* was touched; everything
+  else became a `follow-up` issue. There are 20-odd of them.
+- **No generated ADR text was accepted unedited.** ADRs are the part a reviewer reads for judgement, and a
+  model writes plausible rationale for whatever it just did. Every ADR was rewritten by hand around the
+  alternatives it actually rejected.
+- **Coverage gates are never lowered to get green**, tests are never skipped or deleted, and the frozen API
+  contract in PLAN §1.4 cannot be changed by a session — only by a new ADR.
+- **Docs are enforced by tests where possible.** The error catalogue's examples are the handlers' golden
+  files byte for byte, and the OpenAPI document is validated against every response the tests produce, so
+  "the AI wrote the docs" cannot mean "the docs are wrong".
+
+### Three times the AI was wrong, and how it was caught
+
+1. **It installed a package that does not belong to this project.** In `P0-03`, running `shadcn add button`
+   rewrote the `cn` import and **installed an unrelated npm package literally called `cn`**. Caught by
+   reading the `package.json` diff rather than the component diff. The lesson is in that session verbatim:
+   *"read the `package.json` diff after every generator run."*
+2. **It proposed CI filtering that would have deadlocked every pull request.** In `P0-04` the suggestion was
+   workflow-level `paths:` filters on `pull_request`. GitHub leaves a required check from a *skipped*
+   workflow in "Pending" forever, so with both `ci-ok` checks required and `enforce_admins` on, no
+   backend-only, frontend-only or docs-only PR could ever have merged. Caught by reasoning about branch
+   protection before turning it on; replaced with job-level filtering where a `changes` job lists the PR's
+   files and `ci-ok` treats "skipped" as pass.
+3. **It wrote JavaScript that loses `this`.** In `F2-01` it hoisted a static method into a variable
+   (`const any = ctor.any`) before calling it, which detaches the receiver. Caught by
+   `@typescript-eslint/unbound-method` in `make check` — a linter rule that exists precisely because this
+   mistake reads as correct. Replaced with `typeof ctor.any === "function"` followed by `ctor.any(...)`.
+
+Two more of the same shape are worth a glance because they are *design* corrections rather than bugs: in
+`B1-03` the model reached for `time.Sleep` to get a request in flight across a shutdown, and was replaced
+with an `Expect: 100-continue` trace hook that synchronises on the server's own behaviour; in `F2-02` it
+wanted to compute `x / 100` locally for the `%` key, which would have meant two implementations of the
+same rules and only one of them tested ([ADR-0008](adr/0008-frontend-evaluation-semantics.md)).
+
+### One section per merged pull request
+
+Each session below corresponds to one merged PR, in merge order. Two caveats, recorded rather than papered
+over:
+
+- **PR #51 carries two sessions**, `P0-02` (Go module scaffold) and `P0-03` (Vite scaffold). The P0-02
+  branch was opened as PR #49, which was closed rather than merged after the P0-03 branch was cut from it;
+  both sets of commits landed in #51. Both sessions are logged.
+- **Four merged PRs have no session here**, correctly: #58 and #70 are Dependabot (a bot PR and its
+  configuration follow-up), #66 is a one-line `CLAUDE.md` amendment, and #72 records the ticket
+  consolidation in the plan. None of them was an implementation session, and none is invented here.
+
+---
+
 ## Session PLANNING — 2026-09-22
 
 1. `bana [company] dan böyle bir metin geldi analiz et` + the assignment text pasted verbatim.
@@ -1188,7 +1265,7 @@ Prompt (verbatim, from the orchestrator):
   and known limitations" from the "Sections to be written" list, since that line item is now written;
   every other stub line is untouched.
 
-**Rejected**
+**Rejected (why)**
 - A single Trivy invocation with severity `CRITICAL,HIGH` and `exit-code 1` → this would block on HIGH
   too, which the prompt explicitly says must be reported but not blocking. Split into a report step and a
   blocking step instead.
@@ -1268,3 +1345,143 @@ Finish: PROMPTS.md section with Accepted / Rejected / Written by hand; tick acce
 **Written by hand** — None; every file was generated, then run against the real composed stack
 (`FRONTEND_PORT=18080 docker compose -f compose.yaml -f compose.e2e.yaml up --build --wait`) and
 corrected against actual Playwright output, including the two fixes above.
+
+## Session D4-01 — 2026-09-23
+
+Written in English rather than Turkish, so there is no gloss. One prompt, given in full at the start of
+the session; the sections it refers to are the "Absorbed from" blocks in issue #25.
+
+1. Implement GitHub issue #25 (D4-01: README final; it absorbed #26 PROMPTS consolidation and #27
+   ARCHITECTURE + ADR index — read both "Absorbed from" sections in the issue).
+
+   Read first: CLAUDE.md, `gh issue view 25`, README.md (current skeleton), docs/PLAN.md §0, §1 and the
+   consolidation note at the top of §3 (skip the ticket bodies), docs/ARCHITECTURE.md, docs/adr/README.md
+   and the nine ADR files' Status/Decision sections only, docs/errors.md, docs/PROMPTS.md (skim headings
+   and the Accepted/Rejected blocks), backend/README.md and frontend/README.md (headings +
+   Configuration/Testing sections), compose.yaml, scripts/smoke.sh (header comment),
+   .github/workflows/*.yml (job names only), docs/screenshots/ listing. Backend and frontend source: only
+   `backend/api/openapi.yaml` (paths + examples) and `frontend/src/lib/calculator-engine.ts` header
+   comment. Nothing else.
+
+   Gather facts (do not type from memory):
+   - Coverage: run `make -C backend test` and `cd frontend && npm ci && npm run test:coverage` once, copy
+     the per-package Go table and the frontend summary.
+   - Test counts: from those outputs (Go: `go test -json` not needed; count from `-v` is unnecessary —
+     report per-package coverage and "N test files"; frontend: the "Tests N passed" line; e2e: number of
+     specs).
+   - Image sizes: `docker compose build` then `docker image inspect --format '{{.Size}}'` for both images
+     (report MB, note that docker image ls on Docker 29 shows disk usage).
+   - Time log: derive from `gh pr list --state merged --limit 50 --json number,title,createdAt,mergedAt` —
+     group by sprint using the ticket IDs in PR titles/issues; report wall-clock span per sprint and the
+     total across 2026-09-22/23. State plainly that the work was AI-assisted (Claude Code sessions, one
+     per ticket, directed and reviewed by the author) and that it far exceeds the assignment's 2–4 h
+     guidance; explain why in the "assignment vs added" table, do not apologise for it.
+
+   README.md — final structure (keep the existing headings; fill them; add a short TOC after the badges):
+   1. Badges (existing backend/frontend + stack + security workflows).
+   2. Overview: two paragraphs; one screenshot (light, mobile) from docs/screenshots with the dark one
+      linked; mermaid component diagram (browser → nginx → Go; middleware chain in one line).
+   3. Quick start, three paths: (a) `docker compose up --build` → http://localhost:8080 + `make smoke`;
+      (b) local dev: Go 1.27 + Node 22, `make dev`, ports, CORS env for dev; (c) run tests: `make check`,
+      `make e2e`. Every command must be verified by you on a fresh clone in a temp dir
+      (`git clone https://github.com/isasumer/go-react-calculator /tmp/grc-verify`), and the PR body must
+      list which commands you ran and the outcome.
+   4. API: table of endpoints; request/response examples for calculate (binary and unary), operations, one
+      400, one 422 (copied from backend/api/openapi.yaml examples or httpapi testdata so they are exact);
+      `curl` and `httpie` one-liners; problem+json shape; link to docs/errors.md and to the served spec
+      (`/api/v1/openapi.yaml`) plus the Redoc one-liner from backend/README.md.
+   5. Design decisions: a table of the nine ADRs with one-line decision + rationale + link; then the
+      section "What the assignment asked vs what I added and why" as a table with three columns
+      (Assignment requirement | Where it is satisfied | Beyond the brief, and why) — be concrete and honest
+      (e.g. rate limiting: "not needed for a calculator; included because any internet-facing pure-function
+      API needs an abuse control, cost was ~1 file"). Link SECURITY.md.
+   6. Testing: layers (Go unit + fuzz + contract + integration; frontend unit + component with MSW + axe;
+      smoke; Playwright e2e), how to run each, the coverage numbers you captured, what the CI gates enforce
+      (85 % backend, 85/80 frontend), what is deliberately not tested.
+   7. Project structure: tree (2 levels) with one-line comments.
+   8. Configuration: link to backend/README.md env table; list the three compose-level variables
+      (FRONTEND_PORT, BACKEND_UPSTREAM, IMAGE build args).
+   9. Time log: the per-sprint table + total + the AI-assistance statement.
+   10. Prompts: link to docs/PROMPTS.md and two sentences on how it is organised.
+   11. License.
+
+   docs/ARCHITECTURE.md (absorbed #27): complete the stub — backend request lifecycle with the middleware
+   order and which layer produces each status code; error taxonomy table (code → status → origin → client
+   behaviour) consistent with docs/errors.md; frontend data flow (store → effect → mutation → apiFetch) and
+   a mermaid stateDiagram of the calculator phases from calculator-engine.ts; storage schema and key
+   versioning; operational notes (config, probes, metrics families, shutdown sequence); keep the existing
+   Threat model paragraph; known limitations (float64, en-US locale, no auth, single listener).
+   docs/adr/README.md: every ADR row Accepted with the right ticket; fix any drift you notice between an
+   ADR and the code by editing the ADR's Consequences (never the code) and say so in the PR.
+
+   docs/PROMPTS.md (absorbed #26): add a front section after the format block: "How AI was used"
+   (planning, scaffolding, test generation, review; one session per ticket in a git worktree; every
+   generated line read and run; PRs reviewed against acceptance criteria), the guardrails, and three
+   concrete examples of AI suggestions that were rejected or corrected, taken from the existing Rejected
+   blocks (quote the session). Normalise headings so every merged PR has a section (list any PR that lacks
+   one instead of inventing it). Do not rewrite historical prompts.
+
+   Small fixes allowed: broken relative links, stale "placeholder" sentences in backend/README.md or
+   frontend/README.md.
+
+   Finish: PROMPTS.md section for this session with Accepted / Rejected / Written by hand; tick acceptance
+   criteria in #25; `gh pr create` with the PR title from the issue and `Closes #25`. Do not merge. Report
+   the PR URL.
+
+**Accepted** — The structure as specified, section for section. `README.md` rewritten from the skeleton
+into the eleven sections with a TOC after the badges; every number in it measured in this session rather
+than recalled (per-package Go coverage and the 98.1 % total, the frontend 22 files / 440 tests summary,
+5.5 MB and 5.9 MB image sizes from `docker image inspect`, 5 e2e specs / 10 tests, 9 smoke assertions).
+`docs/ARCHITECTURE.md` completed: the middleware table with the status each layer can produce, the error
+taxonomy with the file that emits each code, the frontend data-flow sketch, a `stateDiagram-v2` of the six
+engine phases, the storage schema and versioning policy, operational notes, the untouched Threat model
+paragraph, and seven known limitations each tied to an ADR or a filed follow-up. `docs/PROMPTS.md` got the
+"How AI was used" front section with the guardrails, three concrete corrections and the PR-to-session map.
+The suggested framing of the assignment-vs-added table was taken as given, including the instruction not
+to apologise for the time.
+
+The screenshots were re-captured rather than reused: the three `f2-03-*` PNGs predate the history panel
+(#82) and no longer show the app. Four new ones — light and dark, mobile (390×844, 2×) and desktop
+(1280×800) — were taken with Playwright against the running Compose stack with three real calculations in
+the history panel, and the superseded files were deleted. Only `README.md` referenced them, and PR #74
+embeds them pinned to a commit SHA, so nothing breaks.
+
+**Rejected (why)**
+- The prompt's "far exceeds the assignment's 2–4 h guidance" as a number to assert — the PR timestamps do
+  not support "far". Elapsed is 6 h 43 m with a 2 h 59 m break inside it, so ≈ 3 h 45 m of work plus this
+  documentation session. The README says 5–6 hours and shows the arithmetic; inflating it to sound
+  impressive would be the same failure as padding it down to sound obedient.
+- Summing the per-sprint spans into a total — Sprints 1 and 2 were interleaved across two worktrees, so
+  the spans overlap and their sum is meaningless. The table reports each span and then the elapsed
+  end-to-end figure, and says why they differ.
+- "`docker image ls` on Docker 29 shows disk usage" as a caveat in the README — it is true, and it is
+  noise for a reader who just wants the size. The sizes quoted are `docker image inspect --format
+  '{{.Size}}'`, which is the right number; the caveat belongs in the PR body, not the README.
+- Reporting the e2e layer as "5 specs" only — the spec files are 5 but the suite is 10 tests across two
+  browser projects (chromium for everything except `responsive.spec.ts`, mobile-safari for exactly that).
+  Both numbers are in the README because either alone is misleading.
+- Editing any ADR's Consequences — the drift hunt found none. Every claim checked against the code held:
+  ADR-0007's three exported functions in `format-number.ts`, ADR-0008's `percent(x, 1)` for a bare `%` and
+  `sqrt` sent with no `b`, ADR-0006's five metric families and injected registry, ADR-0009's distroless
+  self-probing healthcheck and unpublished backend port. All nine rows in `docs/adr/README.md` were
+  already Accepted with the correct closing issue (verified against `gh pr view --json
+  closingIssuesReferences`), so nothing was "fixed" to look diligent.
+- Inventing sessions so that every merged PR has one — four merged PRs are not implementation sessions
+  (#58 and #70 Dependabot, #66 a one-line `CLAUDE.md` amendment, #72 the plan's consolidation note) and
+  #51 carries two (P0-02's own PR #49 was closed, not merged, after the P0-03 branch was cut from it).
+  Both facts are written down in the front section instead.
+- Keeping the existing `f2-03-*` screenshots because the issue's Files/areas says `docs/images/` — they
+  show a UI without the history panel, and "Screenshots current" is one of this issue's three acceptance
+  criteria. Re-captured instead, and the stale files removed rather than left beside the new ones.
+- Verifying `docker compose up` on <http://localhost:8080> literally — 8080 is occupied on this machine,
+  so the fresh-clone run used `FRONTEND_PORT=18080` and `BASE_URL=http://localhost:18080`, which is the
+  documented escape hatch and therefore also verifies that. The README still documents 8080.
+- Leaving follow-up #62 closed — `MAX_BODY_BYTES` is still not wired into `internal/httpapi`, and the
+  issue had been auto-closed by #63's body. Reopened with an explanation rather than deleting the honest
+  "parsed and logged but not yet enforced" sentence from `backend/README.md`.
+
+**Written by hand** — The judgement calls above, and the whole of the "What the assignment asked vs what I
+added, and why" table: the model drafted it, and every row's third column was rewritten to name a concrete
+cost and a concrete reason instead of an adjective. The prose was generated, read and corrected against
+the measured output; all three mermaid diagrams were rendered with `@mermaid-js/mermaid-cli` before commit,
+and every relative link and anchor in the touched files was resolved by a script rather than by eye.
