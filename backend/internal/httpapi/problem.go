@@ -27,6 +27,7 @@ const (
 	CodeUnsupportedMediaType Code = "UNSUPPORTED_MEDIA_TYPE"
 	CodePayloadTooLarge      Code = "PAYLOAD_TOO_LARGE"
 	CodeNotFound             Code = "NOT_FOUND"
+	CodeNotReady             Code = "NOT_READY"
 	CodeMethodNotAllowed     Code = "METHOD_NOT_ALLOWED"
 	CodeInternal             Code = "INTERNAL"
 )
@@ -57,6 +58,8 @@ func (c Code) meta() (status int, title string) {
 		return http.StatusNotFound, "Not found"
 	case CodeMethodNotAllowed:
 		return http.StatusMethodNotAllowed, "Method not allowed"
+	case CodeNotReady:
+		return http.StatusServiceUnavailable, "Not ready"
 	default:
 		return http.StatusInternalServerError, "Internal server error"
 	}

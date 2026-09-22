@@ -33,7 +33,7 @@ _Filled in D4-01._ See [`docs/PLAN.md` §1.1](docs/PLAN.md#11-repository-layout-
 
 ## Configuration
 
-_Filled in B1-03 / D4-01._
+The backend is configured entirely by environment variables (host/port, log level and format, CORS allowlist, HTTP timeouts, shutdown behaviour, request limits); every one of them, with its default and meaning, is tabulated in [`backend/README.md` § Configuration](backend/README.md#configuration). Frontend build-time variables are filled in D4-01.
 
 ## Time log
 

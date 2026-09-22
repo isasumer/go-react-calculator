@@ -306,3 +306,88 @@ bug before commit: for `{…}{}`, the trailing-data check passed a `nil` error t
 
 **Written by hand** — None. Every file was generated, read, and run locally (`make -C backend check`, plus
 the built binary exercised with curl) before commit.
+
+## Session B1-03 — 2026-09-22
+
+1. Session mechanics (verbatim; the wrapper each ticket session is started with):
+
+   ```text
+   ORCHESTRATION RULES (from the orchestrator, override nothing in CLAUDE.md, add to it):
+   - Work ONLY inside the git worktree /home/sumer/gorc-wt/issue-7. It is already on branch `backend/7-config-lifecycle`, cut from fresh origin/main. Do not switch branches, do not touch /home/sumer/go-react-calculator or any other worktree.
+   - Go toolchain: /home/sumer/.local/go/bin (export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH" in every shell you run). Node 22 via nvm is not needed for this ticket.
+   - Never merge. Never push to main. Open the PR and stop.
+   - Before opening the PR run `git fetch origin && git rebase origin/main`; if docs/PROMPTS.md or docs/adr/README.md conflict, keep both sides (all sessions' sections) and continue.
+   - Your final message must contain: the PR URL, the `make -C backend check` coverage lines, anything you deliberately left out, and any follow-up issues you filed.
+   ```
+
+2. Task prompt (verbatim; written in English):
+
+   ```text
+   Implement GitHub issue #7 (B1-03: Config, server lifecycle, graceful shutdown, health/readiness/version endpoints) in this repository. Prerequisite #6 is merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 7`, then docs/PLAN.md §1.1 and §1.4 (the operational endpoints line), backend/cmd/server/main.go and its test, and the exported API of backend/internal/httpapi (go doc). Do not explore beyond backend/cmd/server, backend/internal/config, backend/internal/observability, backend/internal/httpapi (only to register the probe routes) and docs.
+
+   Constraints for this ticket:
+   - Standard library only. No middleware behaviour and no metrics — those are #8 and #9.
+   - internal/config: `Load(getenv func(string) string) (Config, error)`. Variables with defaults: PORT=8081, HOST=0.0.0.0, LOG_LEVEL=info (debug|info|warn|error), LOG_FORMAT=json (json|text), CORS_ALLOWED_ORIGINS="" (csv, parsed to []string), READ_HEADER_TIMEOUT=5s, READ_TIMEOUT=10s, WRITE_TIMEOUT=10s, IDLE_TIMEOUT=60s, SHUTDOWN_TIMEOUT=15s, REQUEST_TIMEOUT=5s, RATE_LIMIT_RPS=20, RATE_LIMIT_BURST=40, MAX_BODY_BYTES=4096, TRUST_PROXY_HEADERS=false, PRE_STOP_DELAY=0s. Durations via time.ParseDuration, ints/bools strictly parsed. Invalid value → error naming the variable and the received value. Config.String() renders the resolved values for the startup log (nothing here is secret; say so in a comment).
+   - internal/observability/buildinfo.go: Version, Commit, BuildDate set via -ldflags -X (already in backend/Makefile build target — check and align names), with debug.ReadBuildInfo fallback for commit/vcs.time and "dev" defaults. `-version` flag on the binary prints them and exits 0.
+   - Logger: slog handler chosen by LOG_FORMAT and LOG_LEVEL, constructed in run() and injected into httpapi.Handler. Startup line logs the resolved config and bound address; shutdown line logs the drain duration.
+   - run(ctx, args, getenv, stdout) error: parse flags, Load config, build logger, registry, handler, http.Server with all five timeouts set from config, net.Listen first (so PORT=0 works and the bound address is known), serve in a goroutine, wait for ctx.Done() (signal.NotifyContext for SIGINT/SIGTERM in main only, not in run), then: flip readiness to false, sleep PRE_STOP_DELAY, Shutdown with SHUTDOWN_TIMEOUT, return the first non-nil error. main() stays a thin wrapper that exits 1 on error.
+   - Probes in httpapi (or a small probes.go there): GET /healthz → 200 {"status":"ok"} always once the process serves; GET /readyz → 200 {"status":"ready"} while ready, 503 problem code=NOT_READY once shutdown began (atomic.Bool owned by the server lifecycle, passed in as a func() bool or *atomic.Bool); GET /version → 200 {version, commit, buildDate, goVersion}. All three set Cache-Control: no-store. Wrong method → 405 as elsewhere.
+   - Tests: config_test.go (all defaults, every override, each invalid value with the variable name in the error, CSV parsing with spaces/empties); buildinfo_test.go; probe handler tests including readiness flip; main_test.go lifecycle test: start run() with PORT=0 using t.Setenv-style getenv, wait until /readyz is 200, start a slow in-flight request, cancel ctx, assert /readyz turns 503 before the server closes, the in-flight request completes, and run() returns nil within SHUTDOWN_TIMEOUT. Also a test that an invalid PORT makes run() return an error without listening. No fixed ports anywhere.
+   - Update backend/README.md (or the Configuration section it owns) with the env-var table: name, default, meaning. Root README "Configuration" section gets one line pointing there; do not restructure README headings.
+
+   Finish by: running `make -C backend check` and `PORT=0 go run ./cmd/server` (then Ctrl-C, or send SIGINT via timeout -s INT 2 ...) and pasting the outputs — including the startup and shutdown log lines — into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session B1-03 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #7; opening the PR with `gh pr create` using the PR title from the issue and `Closes #7`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — `internal/config`: `Load(getenv)` with a small `loader` that reads every variable, collects
+*all* parse failures and returns them joined, so one restart shows every mistake instead of one per attempt.
+Each failure is a `*ParseError{Name, Value, Err}` rendering as `config: PORT="eight thousand": must be an
+integer`. Unset and blank are the same thing (a deployment that passes `PORT=""` gets the default). Types are
+real types, not strings: `slog.Level`, a `LogFormat` enum, `time.Duration`, `int64` for `MAX_BODY_BYTES`, and
+`[]string` for the CSV allowlist (spaces trimmed, empty items dropped). `Config.String()` renders every
+resolved value for the startup log with a comment saying nothing here is secret and where to redact if that
+ever changes. `internal/observability.Build()` layers the three sources — `-ldflags -X`, the toolchain's
+embedded VCS stamps (short revision plus `-dirty`), then `dev` — behind `resolve()`, which takes the
+`*debug.BuildInfo` as an argument so the fallback is testable without building a binary; `backend/Makefile`
+now stamps `…/internal/observability.Version|Commit|BuildDate` instead of the `main.version|commit|date`
+variables that no longer exist. `cmd/server`: `main` owns only signals and the exit code; `run` listens
+before it serves (so `PORT=0` resolves to a real port and a bind failure is an error, not a log line), then
+`drain()` flips readiness off, waits `PRE_STOP_DELAY`, and calls `Shutdown` with `SHUTDOWN_TIMEOUT`.
+`httpapi` gained `probes.go` (`/healthz`, `/readyz`, `/version`, all `Cache-Control: no-store`, 405 with
+`Allow: GET, HEAD` for anything else) and functional options `WithReadiness`/`WithBuildInfo`, so the handler
+stays free of globals and every existing `NewHandler(reg, log)` call still compiles. Coverage: config and
+observability 100 %, httpapi 97.2 %, cmd/server 90.9 %, total 97.0 %.
+
+**Rejected (why)**
+- The `-addr` flag that `run()` had since P0-02 → deleted. With `HOST`/`PORT` in the environment, a second
+  way to set the address is a second source of truth; `-version` is the only flag left. `make run` and the
+  backend README now document `PORT=9000 make run`.
+- `*atomic.Bool` passed into `httpapi` (the prompt offered either) → `WithReadiness(func() bool)`. The flag
+  belongs to the process lifecycle; the transport only needs to ask. `WithReadiness(nil)` keeps the default
+  (always ready) rather than panicking on the first probe.
+- `slog.Level.UnmarshalText` for `LOG_LEVEL` → a strict four-value lookup. slog's parser also accepts
+  `info+2`, which is not a contract worth supporting; the error message lists the four names instead.
+- A `main.version`-style set of variables kept for compatibility → removed. Two copies of the build identity
+  is how a `/version` endpoint starts lying.
+- Building the logger in `internal/observability` (where PLAN §1.1 files "slog setup") → the prompt is
+  explicit that `run()` constructs it, and a 12-line `newLogger` in the composition root beats a package
+  that exists to hide a `switch`. `observability` keeps build information only.
+- `t.Setenv` in the lifecycle test → a map-backed `getenv`. `t.Setenv` mutates the process environment and
+  forbids `t.Parallel`, and `run` takes `getenv` precisely so no test has to.
+- `time.Sleep` to get a request in flight across the shutdown → `Expect: 100-continue` with an
+  `httptrace.Got1xxResponse` hook. The server answers `100` exactly when the handler first reads the body,
+  which is the moment the connection counts as active, so the test synchronises on the server's own
+  behaviour instead of guessing. The body is then sent in two halves around the cancellation. No sleeps and
+  no fixed ports anywhere (`PORT=0`, plus one test that binds a port first and hands it to `run` to prove a
+  listen failure is returned).
+- Adding `NOT_READY` as a code without touching the docs → not possible, and rightly: ADR-0005 makes
+  `docs/errors.md` the source of the `type` anchors and `TestErrorCatalogueMatchesGoldenFiles` enforces it.
+  The catalogue got a row, a section and the golden file `testdata/not_ready.json`.
+- Wiring `MAX_BODY_BYTES` into `httpapi`'s 4 KiB constant here → out of scope (this ticket only reads
+  config; B1-04's Files/areas is `internal/middleware/`). Filed as follow-up #62 so the variable does not
+  stay documented-but-ignored.
+
+**Written by hand** — None. Every file was generated, read and run locally (`make -C backend check`, the
+built binary exercised with curl against all three probes, and `PORT=0 go run ./cmd/server` interrupted with
+SIGINT) before commit.

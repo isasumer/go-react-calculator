@@ -13,10 +13,13 @@ TOOLS        := $(GOLANGCI) $(GOFUMPT) $(GOVULNCHECK)
 COVERPROFILE := coverage.out
 COVER_MIN    := 85
 
+# Build identity stamped into internal/observability (see buildinfo.go). When
+# these are not set, the package falls back to the embedded VCS stamps.
+BUILDINFO := github.com/isasumer/go-react-calculator/backend/internal/observability
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
+LDFLAGS := -s -w -X $(BUILDINFO).Version=$(VERSION) -X $(BUILDINFO).Commit=$(COMMIT) -X $(BUILDINFO).BuildDate=$(DATE)
 
 .PHONY: help
 help: ## List targets
@@ -69,7 +72,7 @@ build: ## Build the server binary into ./bin/server with version info
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN)/server ./cmd/server
 
 .PHONY: run
-run: ## Run the server on :8081
+run: ## Run the server (PORT=9000 make run to change the port)
 	go run ./cmd/server
 
 .PHONY: check

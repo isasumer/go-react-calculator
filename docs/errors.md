@@ -18,6 +18,7 @@ Clients branch on `code`, never on `title` or `detail`: those are for humans and
 | `NOT_FOUND` | 404 | No route matches the path. | Bug in the client: check the base URL and API version. | [example](#not_found) |
 | `METHOD_NOT_ALLOWED` | 405 | The path exists but not for this method. The `Allow` response header lists the methods that are allowed. | Bug in the client: use a method from `Allow`. | [example](#method_not_allowed) |
 | `INTERNAL` | 500 | An unexpected server error. `detail` is deliberately generic; the cause is logged server-side with the same `requestId`. | Show a generic error and allow a retry; report the `requestId` if it persists. | [example](#internal) |
+| `NOT_READY` | 503 | `GET /readyz` only: the process has started shutting down and is draining its in-flight requests. Operational, never returned by an `/api/v1` route. | Platform concern: a load balancer takes the instance out of rotation and retries elsewhere. | [example](#not_ready) |
 
 ## Shape
 
@@ -349,6 +350,30 @@ Not reachable through a valid request; produced for any error the service did no
   "detail": "an unexpected error occurred",
   "code": "INTERNAL",
   "instance": "/api/v1/calculate",
+  "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
+}
+```
+
+### NOT_READY
+
+Only `GET /readyz`, and only while the process is draining: readiness is flipped off before the listener closes, so a load balancer stops routing to this instance while it finishes the requests it already has. Liveness (`GET /healthz`) keeps answering `200` throughout — a draining process must not be restarted.
+
+Request:
+
+```http
+GET /readyz
+```
+
+Response (`503`, `application/problem+json`, `Cache-Control: no-store`):
+
+```json
+{
+  "type": "https://github.com/isasumer/go-react-calculator/blob/main/docs/errors.md#not_ready",
+  "title": "Not ready",
+  "status": 503,
+  "detail": "the server is shutting down and is not accepting new requests",
+  "code": "NOT_READY",
+  "instance": "/readyz",
   "requestId": "4bf92f35-77b3-4da6-a3ce-929d0e0e4736"
 }
 ```
