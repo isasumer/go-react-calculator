@@ -391,3 +391,80 @@ observability 100 %, httpapi 97.2 %, cmd/server 90.9 %, total 97.0 %.
 **Written by hand** — None. Every file was generated, read and run locally (`make -C backend check`, the
 built binary exercised with curl against all three probes, and `PORT=0 go run ./cmd/server` interrupted with
 SIGINT) before commit.
+
+## Session F2-01 — 2026-09-22
+
+Two prompts: the session was run by a small orchestrator that prepares a worktree per issue, so the
+first prompt is that harness's rules and the second is the ticket itself.
+
+1. ```
+   ORCHESTRATION RULES (from the orchestrator, override nothing in CLAUDE.md, add to it):
+   - Work ONLY inside the git worktree /home/sumer/gorc-wt/issue-12. It is already on branch `frontend/12-api-layer`, cut from fresh origin/main. Do not switch branches, do not touch /home/sumer/go-react-calculator or any other worktree.
+   - Node 22 via nvm: run `source ~/.nvm/nvm.sh && nvm use 22` (or whatever frontend/.nvmrc says) in every shell you run. Go is not needed for this ticket; the backend is only a reference for the contract.
+   - A backend session (#7) runs in parallel and will also append docs/PROMPTS.md. Never merge. Never push to main. Before opening the PR run `git fetch origin && git rebase origin/main`; if docs/PROMPTS.md conflicts, keep both sides and continue.
+   - Your final message must contain: the PR URL, the coverage summary from `npm run test:coverage`, anything you deliberately left out, and any follow-up issues you filed.
+   ```
+
+2. ```
+   Implement GitHub issue #12 (F2-01: Frontend API layer) in this repository. Prerequisites #3 and #6 are merged; start from a fresh `main`.
+
+   Start by reading CLAUDE.md, then `gh issue view 12`, then docs/PLAN.md §1.1, §1.2 and §1.4 (the frozen API contract), docs/errors.md (every problem code the backend emits — this is your MSW fixture list), docs/adr/0002-frontend-stack.md and docs/adr/0005-problem-json-errors.md, frontend/README.md conventions, frontend/src/config.ts and frontend/src/test/setup.ts. For the exact wire shapes, read backend/internal/httpapi/dto.go and backend/internal/httpapi/testdata/*.json read-only. Do not explore beyond frontend/src/{lib,hooks,types,test,components/providers}, frontend/package.json and docs.
+
+   Constraints for this ticket:
+   - src/lib/api.ts: `apiFetch<T>(path, { method?, body?, signal?, schema?, timeoutMs? })` over native fetch. Base URL from getConfig().apiBaseUrl; JSON headers; default timeout 10 s via AbortSignal.timeout merged with the caller's signal (AbortSignal.any if available, else manual). Parse `application/problem+json` (and any JSON error body with a `code`) into `class ApiError extends Error { status, code, title, detail, requestId, errors: {field,message}[], retryAfterSeconds? }`; network/abort failures → ApiError code=NETWORK (status 0) or TIMEOUT; non-JSON or unexpected bodies → code=UNEXPECTED; when `schema` (zod) is given, validate the parsed body and fail closed with code=INVALID_RESPONSE. Export `isApiError(e): e is ApiError`. Also read X-Request-ID from the response headers into ApiError.requestId when the body has none.
+   - src/lib/query-config.ts: CALCULATE_ENDPOINT, OPERATIONS_ENDPOINT, query keys (`calculatorKeys.operations()`), STALE_TIME constants.
+   - src/types/calculator.ts: OperationName union matching the backend registry (add, subtract, multiply, divide, power, sqrt, percent), CalculateRequest (a required, b optional), CalculateResponse, OperationSpec {name, symbol, arity}, ProblemDetails; zod schemas `calculateResponseSchema`, `operationsResponseSchema`, `problemSchema` (lenient on unknown fields) with inferred types re-exported. Keep hand-written interfaces where zod inference would hurt readability.
+   - src/lib/error-messages.ts: single table mapping every backend code in docs/errors.md plus NETWORK/TIMEOUT/UNEXPECTED/INVALID_RESPONSE to a short user-facing message; `messageForError(e: unknown): string` with a generic fallback. Tested exhaustively (every code has a message; unknown code falls back).
+   - src/hooks/use-calculate.ts: `useCalculate()` → useMutation<CalculateResponse, ApiError, CalculateRequest> using apiFetch with calculateResponseSchema. src/hooks/use-operations.ts: `useOperations()` → useQuery with staleTime Infinity, retry 1, and `placeholderData` = a static fallback list (same seven operations) so the UI never blocks on the network; expose `isFallback`.
+   - src/components/providers/QueryProvider.tsx: QueryClient defaults (queries: retry 1, refetchOnWindowFocus false, staleTime 60 s; mutations: retry 0); exported `createQueryClient()` for tests and a `renderWithProviders`/`createWrapper` helper in src/test/utils.tsx.
+   - src/test/msw/handlers.ts + server.ts: handlers replicating the backend contract for POST /api/v1/calculate (every operation, DIVISION_BY_ZERO, DOMAIN_ERROR, RESULT_NOT_FINITE, UNSUPPORTED_OPERATION, VALIDATION_FAILED, INVALID_BODY) and GET /api/v1/operations, plus helpers to override a handler per test (429 with Retry-After, 500 text body, network error, malformed JSON). Wire server lifecycle in src/test/setup.ts (listen with onUnhandledRequest: "error", resetHandlers after each, close after all). Problem bodies in fixtures must match docs/errors.md examples.
+   - Tests: api.test.ts (success with schema, 422 problem → ApiError fields incl. errors[], 429 → retryAfterSeconds, network error → NETWORK, timeout → TIMEOUT, malformed JSON → UNEXPECTED, schema mismatch → INVALID_RESPONSE, request id from header), error-messages.test.ts, use-calculate.test.tsx and use-operations.test.tsx with renderHook + wrapper (success, error, fallback path when the network fails). No `any`; ESLint and type-check clean. Coverage for the new files ≥ 90 % lines.
+   - Do not build UI components, stores or the calculator engine — those are #13 and #14. Do not change vitest thresholds (that is #18).
+
+   Finish by: running `make -C frontend check` and `npm run test:coverage` and pasting the outputs into the PR body; appending this prompt verbatim to docs/PROMPTS.md under "## Session F2-01 — <today>" with Accepted / Rejected / Written by hand; ticking the acceptance criteria in issue #12; opening the PR with `gh pr create` using the PR title from the issue and `Closes #12`. Do not merge. Report the PR URL.
+   ```
+
+**Accepted** — `src/lib/api.ts` is the whole HTTP surface: `apiFetch<T>(path, options)` over native `fetch`,
+with `fetch` and `response.text()` inside one `try` so a connection dropped mid-body fails like any other
+transport error. `anySignal` merges `AbortSignal.timeout(timeoutMs)` with the caller's signal, preferring
+`AbortSignal.any` and otherwise wiring listeners with `{ once: true, signal: controller.signal }` so nothing
+leaks; both paths are tested (the test deletes `AbortSignal.any` and restores its property descriptor).
+Nothing escapes as a `TypeError`, `DOMException` or `ZodError`: a failed request is `NETWORK` (status 0) or
+`TIMEOUT`, any JSON body carrying a `code` keeps that code, anything else becomes `UNEXPECTED` with a
+200-character excerpt of the body, and a schema mismatch fails closed as `INVALID_RESPONSE`. `requestId`
+falls back from the body to the `X-Request-ID` header, and `Retry-After` is read as delay-seconds or an
+HTTP-date. `src/types/calculator.ts` hand-writes what we send (`CalculateRequest`) and the documented
+problem shape (`ProblemDetails`, `FieldError`) and infers what the server sends from the zod schemas, so a
+schema and its type cannot drift. `src/test/msw/handlers.ts` is a reimplementation of the service's
+decode → validate → evaluate pipeline, including the 400-before-422 ordering, the per-operation details and
+`httpapi.NewProblem`'s `type`/`title`/`status` derivation; one test asserts the DIVISION_BY_ZERO body field
+for field against the example in `docs/errors.md`. `FALLBACK_OPERATIONS` lives in the hook (app code never
+imports from `src/test`) and a test asserts it equals the MSW registry, so the two cannot drift either.
+119 tests, `make -C frontend check` green, 100 % statements/branches/functions/lines on every measured file.
+Dependencies added: `@tanstack/react-query` and `zod`, both named in ADR-0002.
+
+**Rejected (why)**
+- `apiFetch` rethrowing a caller-initiated abort unchanged → every rejection is an `ApiError`, so one
+  `isApiError` check covers the layer. A cancellation maps to `NETWORK`; TanStack Query discards it anyway.
+- `calculateResponseSchema.operation` as a free string → `z.enum`: the server can only echo an operation we
+  just sent, so an unknown one is a real defect. The discovery endpoint keeps `name: z.string()` for the
+  opposite reason — it exists precisely so a backend that gains an operation does not break this client.
+- Adding a `RATE_LIMITED` row to `docs/errors.md` → the catalogue is B1-04's to extend. The message table
+  and the 429 handler use the code ADR-0005 already fixes, and `error-messages.test.ts` says so.
+- `error-messages.test.ts` reading `docs/errors.md` to enumerate the codes → the list is hard-coded.
+  PLAN §1.1 wants each app to test standalone; a unit test that reads a sibling directory breaks that.
+- Wiring `QueryProvider` into `main.tsx` → left to #13, the first ticket with a component that needs it.
+  The provider has its own test, so it is not untested dead code.
+- `@tanstack/react-query-devtools` → installed while wiring the provider, then removed: not in ADR-0002's
+  stack and not needed by this ticket.
+- Hoisting `AbortSignal.any` into a variable (`const any = ctor.any`) → `typeof ctor.any === "function"`
+  followed by `ctor.any(...)`. Detaching a static method loses its receiver; `@typescript-eslint/unbound-method`
+  flagged it and was right to.
+- Touching `vitest.config.ts` thresholds, `frontend/README.md` or `main.tsx` → outside this issue's
+  **Files / areas**; coverage thresholds are #18.
+
+**Written by hand** — None. Every file was generated, read and run locally (`make -C frontend check`,
+`npm run test:coverage`) before commit. Two generated tests were wrong and were corrected after reading the
+failures: `useOperations` reports `isSuccess` from the very first render because `placeholderData` counts as
+data, so those tests now wait on `isFallback`; and `statusText` is filled from the standard reason phrase, so
+the "no status text, fall back to the code as the title" case needs a non-standard status (599).
