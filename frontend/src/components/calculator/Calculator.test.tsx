@@ -8,6 +8,7 @@ import { apiUrl } from "@/lib/api";
 import { FALLBACK_ERROR_MESSAGE } from "@/lib/error-messages";
 import { CALCULATE_ENDPOINT } from "@/lib/query-config";
 import { useCalculatorStore } from "@/stores/useCalculatorStore";
+import { useHistoryStore } from "@/stores/useHistoryStore";
 import { networkError } from "@/test/msw/handlers";
 import { server } from "@/test/msw/server";
 import { renderWithProviders } from "@/test/utils";
@@ -16,6 +17,7 @@ import { renderWithProviders } from "@/test/utils";
 beforeEach(() => {
   useCalculatorStore.getState().setEvaluator(null);
   useCalculatorStore.getState().clearAll();
+  useHistoryStore.getState().clear();
 });
 
 /** The main display line, which is the `aria-live` region. */
@@ -250,6 +252,38 @@ describe("Calculator", () => {
         expect(result()).toHaveTextContent("2");
       });
       expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    });
+  });
+
+  describe("history (F2-05, #16)", () => {
+    it("records a history row after '12 + 7 =', which survives a re-mount with the same mocked localStorage", async () => {
+      const user = userEvent.setup();
+      const { unmount } = renderWithProviders(<Calculator />);
+
+      await user.click(key("1"));
+      await user.click(key("2"));
+      await user.click(key("add"));
+      await user.click(key("7"));
+      await user.click(key("equals"));
+
+      await waitFor(() => {
+        expect(result()).toHaveTextContent("19");
+      });
+
+      expect(useHistoryStore.getState().entries).toEqual([
+        expect.objectContaining({ operation: "add", a: 12, b: 7, result: 19 }),
+      ]);
+      const stored = JSON.parse(localStorage.getItem("calc.history.v1") ?? "[]") as unknown[];
+      expect(stored).toHaveLength(1);
+
+      unmount();
+
+      // A re-mount does not re-hydrate the already-loaded module singleton, but it must not lose
+      // or duplicate what is already there — and what's on screen must match the (unchanged) store.
+      renderWithProviders(<Calculator />);
+
+      expect(useHistoryStore.getState().entries).toHaveLength(1);
+      expect(screen.getByRole("button", { name: "12 + 7 = 19" })).toBeInTheDocument();
     });
   });
 

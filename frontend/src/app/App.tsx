@@ -47,7 +47,9 @@ export function App() {
         </p>
       </header>
 
-      <main className="w-full max-w-sm landscape-short:max-w-2xl">
+      {/* `sm:max-w-3xl` gives `HistoryPanel` (F2-05, #16) room to sit beside the calculator card
+          as a side column instead of stacking below it once the viewport is wide enough. */}
+      <main className="w-full max-w-sm sm:max-w-3xl landscape-short:max-w-2xl">
         <Calculator />
       </main>
     </div>

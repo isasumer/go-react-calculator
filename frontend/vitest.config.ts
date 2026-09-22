@@ -29,7 +29,7 @@ export default mergeConfig(
           // shadcn-generated primitives are vendored code; they are exercised through feature tests.
           "src/components/ui/**",
         ],
-        reporter: ["text", "html", "lcov"],
+        reporter: ["text", "lcov", "json-summary"],
         thresholds: {
           lines: 85,
           statements: 85,
