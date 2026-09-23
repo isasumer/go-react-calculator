@@ -1618,3 +1618,26 @@ state rather than authored content needing hand-correction beyond wording.
   is out of this issue's scope.
 
 **Written by hand** — none.
+
+## Session FU-14 — 2026-09-23
+
+**Prompts**
+- "pr ı merge et ve deploy et"
+- "daha sonra projenin read me dosyasını güncelle."
+
+**Accepted**
+- Merging #88 (all checks green) before #90. #90's only red check was the Vercel preview, which failed
+  because its branch predated `vercel.json`. Merging `main` into the branch (no force-push) resolved the
+  `docs/PROMPTS.md` append conflict and turned that check green before the merge.
+- No manual `vercel deploy --prod`: the merge of #90 triggered a production deployment through the Git
+  integration. The live site was then measured with Playwright at five viewports and matched the local
+  figures from #90.
+- README: live-demo pointer in the Overview, the Git-integration table in "4. Deploy to Vercel", and
+  `vercel.json` / `.vercelignore` in the project structure. The four screenshots were regenerated from
+  the live site with the same viewports (390×844 @2x, 1280×800 @1x) and the same three calculations.
+
+**Rejected**
+- Setting `VITE_APP_VERSION` on Vercel so the badge stops reading `dev`: that is a deployment change, not
+  a README one. Left for a follow-up.
+
+**Written by hand** — none.

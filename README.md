@@ -27,7 +27,8 @@ percentage ([ADR-0008](docs/adr/0008-frontend-evaluation-semantics.md)). The bac
 stable machine `code`, Prometheus metrics and a graceful shutdown, all described by an OpenAPI 3.1
 contract that the tests validate every handler response against. In production both run as distroless
 non-root containers behind one nginx that serves the app and proxies `/api/` over a private network, so
-the API has no host port at all.
+the API has no host port at all. The [live demo](https://go-react-calculator.vercel.app) runs the same two
+apps on Vercel with the same single-origin layout ([Deploy to Vercel](#4-deploy-to-vercel)).
 
 <p align="center">
   <img src="docs/screenshots/calculator-light-mobile.png" alt="The calculator on a 390×844 mobile viewport, light theme, with three calculations in the history panel" width="320">
@@ -127,11 +128,23 @@ origin and the ADR-0009 model holds: no CORS, and the operational endpoints (`/m
 `/version`) are not public. The security headers in `frontend/nginx/security-headers.conf` are repeated
 in `vercel.json` for every non-API path.
 
+The project is connected to this repository through Vercel's Git integration, so no deploy step is needed:
+
+| Event | Result |
+|---|---|
+| Push to a pull-request branch | Preview deployment with its own URL, reported as the `Vercel` check on the PR |
+| Merge to `main` | Production deployment at https://go-react-calculator.vercel.app |
+
+Two settings live in the Vercel project instead of the repository, because they describe the platform
+rather than the app: `TRUST_PROXY_HEADERS=true`, so the rate limiter keys on the client address that
+Vercel's edge puts in `X-Forwarded-For` instead of the edge's own, and `LOG_FORMAT=json`. To set up a new
+project or deploy by hand:
+
 ```sh
 vercel link --project go-react-calculator
-vercel env add TRUST_PROXY_HEADERS production   # "true": Vercel's edge sets X-Forwarded-For
+vercel env add TRUST_PROXY_HEADERS production   # "true"
 vercel env add LOG_FORMAT production            # "json"
-vercel deploy --prod
+vercel deploy --prod                            # or `vercel deploy` for a preview
 ```
 
 ## API
@@ -387,6 +400,8 @@ go-react-calculator/
 ├── .github/workflows/        backend · frontend · stack · security
 ├── compose.yaml              the whole product: nginx :8080 → Go :8081, private
 ├── compose.e2e.yaml          overlay raising the rate limit for the Playwright run
+├── vercel.json               Vercel Services: Vite SPA + backend container, /api/* → backend
+├── .vercelignore             keeps build output, coverage and e2e out of the Vercel upload
 ├── Makefile                  umbrella targets: dev · check · test · up · down · smoke · e2e
 ├── CLAUDE.md                 session bootstrap for the AI-assisted workflow
 └── SECURITY.md               threat model summary and disclosure policy
