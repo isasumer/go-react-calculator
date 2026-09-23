@@ -1592,4 +1592,29 @@ state rather than authored content needing hand-correction beyond wording.
 - Formatting README.md with Prettier: the file was already non-conforming on `main`, and README is not
   part of the `make check` format gate.
 
+## Session FU-13 — 2026-09-23
+
+**Prompts**
+- "bu [Image #1] daha buyük ve geniş olsun. mobile de dikkat edelim" (with a screenshot of the calculator
+  at desktop size, showing it small in the middle of the page)
+
+**Accepted**
+- Card capped at 28 rem (fills a phone), 32 rem from `lg:`. The history panel grows to 18/20 rem, and the
+  header and `main` use card + gap + panel widths so the version badge lines up with the content.
+- A `tall` custom variant (`min-height: 40rem`): keys grow from 44 px to 56 px, and to 64 px from `sm:`.
+  Labels get one step bigger per key type so the digit/operator/action hierarchy stays the same. The
+  variant is disjoint from `landscape-short`, so a phone on its side keeps the 44 px compact pad. 40 rem
+  rather than 44 rem so a 375×667 phone gets the bigger keys (the last key ends at 580 px of 667).
+- Display: short values at `text-5xl`, the 9–11 step at `text-4xl` only from `lg:`, and both drop to
+  `text-2xl` on a landscape phone, where the display shares the card with the keys.
+- Checked in Chromium with Playwright against a local build + backend at 1280×800, 393×852, 375×667,
+  320×568 and 667×375. No viewport scrolls horizontally, every key is on screen, and "0.123456" fills
+  exactly 230/230 px at 320 wide.
+
+**Rejected**
+- `sm:text-4xl` for the 9–11 step: a phone on its side is already past `sm:` (667 px), so the value
+  truncated in landscape. Moved to `lg:`.
+- Making the landscape display column wider than the keypad: that changes the landscape layout, which
+  is out of this issue's scope.
+
 **Written by hand** — none.

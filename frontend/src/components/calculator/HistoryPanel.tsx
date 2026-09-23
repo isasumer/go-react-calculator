@@ -71,7 +71,7 @@ export function HistoryPanel({ onRecall }: HistoryPanelProps) {
         setOpen(next);
         writeOpenState(next);
       }}
-      className="w-full max-w-sm rounded-2xl border border-border bg-surface-raised p-3 shadow-sm sm:w-64 sm:max-w-none"
+      className="w-full max-w-md rounded-2xl border border-border bg-surface-raised p-3 shadow-sm sm:w-72 sm:max-w-none sm:p-4 lg:w-80"
     >
       <summary className="cursor-pointer select-none text-sm font-semibold text-text">
         History ({entries.length})

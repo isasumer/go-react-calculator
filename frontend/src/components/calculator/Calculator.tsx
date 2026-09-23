@@ -172,7 +172,7 @@ export function Calculator() {
   return (
     // Mobile/portrait: the history panel stacks below the card. From `sm:` (40rem) up there is
     // room for it to sit beside the card as its own column instead.
-    <div className="flex w-full max-w-sm flex-col items-stretch gap-3 sm:max-w-none sm:flex-row sm:items-start sm:justify-center">
+    <div className="flex w-full flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-center">
       <section
         data-ui="calculator"
         aria-label="Calculator"
@@ -180,8 +180,9 @@ export function Calculator() {
           // Portrait: one column, display on top. On a phone held sideways there is no room for a
           // display *and* five rows of keys, so the two sit next to each other instead and the
           // display stays on screen rather than scrolling away above the pad.
-          "flex w-full max-w-sm flex-col gap-3 rounded-2xl border border-border " +
-          "bg-surface-raised p-3 shadow-sm " +
+          // Fills a phone up to 28 rem and grows to 32 rem on a desktop.
+          "flex w-full max-w-md flex-col gap-3 rounded-2xl border border-border " +
+          "bg-surface-raised p-3 shadow-sm sm:gap-4 sm:p-4 lg:max-w-lg " +
           "landscape-short:grid landscape-short:max-w-2xl landscape-short:grid-cols-2 " +
           "landscape-short:items-start"
         }

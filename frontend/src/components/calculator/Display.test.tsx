@@ -145,10 +145,10 @@ describe("Display", () => {
 
 describe("entrySizeClass", () => {
   it.each([
-    ["0", "text-4xl"],
-    ["12345678", "text-4xl"],
-    ["123456789", "text-3xl"],
-    ["12345678901", "text-3xl"],
+    ["0", "text-5xl landscape-short:text-2xl"],
+    ["12345678", "text-5xl landscape-short:text-2xl"],
+    ["123456789", "text-3xl lg:text-4xl landscape-short:text-2xl"],
+    ["12345678901", "text-3xl lg:text-4xl landscape-short:text-2xl"],
     ["123456789012", "text-2xl"],
     ["123456789012345", "text-2xl"],
     ["-1234567890123456", "text-xl"],

@@ -158,7 +158,7 @@ export function Keypad(props: KeypadProps) {
       data-ui="calculator.keypad"
       role="group"
       aria-label="Keypad"
-      className="grid grid-cols-4 gap-2"
+      className="grid grid-cols-4 gap-2 sm:gap-3"
     >
       {buildKeys(props).map((key) => (
         <Key

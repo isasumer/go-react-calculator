@@ -13,6 +13,12 @@
 @custom-variant landscape-short (@media (orientation: landscape) and (max-height: 32rem));
 
 /*
+ * Tall enough for bigger keys: a display plus six rows of 56 px keys fit without scrolling. Disjoint
+ * from `landscape-short`, so the two never compete for the same property.
+ */
+@custom-variant tall (@media (min-height: 40rem));
+
+/*
  * Design tokens. Raw values live in CSS custom properties so they can be swapped per colour scheme;
  * `@theme inline` exposes them as Tailwind colours (`bg-surface`, `text-danger`, `bg-key-operator`, …).
  * The shadcn names (background, primary, destructive, …) alias the calculator tokens so primitives and
