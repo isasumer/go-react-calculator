@@ -1641,3 +1641,21 @@ state rather than authored content needing hand-correction beyond wording.
   a README one. Left for a follow-up.
 
 **Written by hand** — none.
+
+## Session FU-15 — 2026-09-23
+
+**Prompts**
+- "github linkini https://go-react-calculator.vercel.app/ buraya ekle tıklanınca github a gidilsin"
+
+**Accepted**
+- A GitHub mark link in the header, beside the version badge, opening the repository in a new tab with
+  `rel="noopener noreferrer"`. The accessible name says it opens a new tab; the SVG is `aria-hidden`.
+- The Octicons `mark-github` path inlined as SVG, so the CSP (`img-src 'self' data:`) needs no change
+  and no icon dependency is added.
+- The URL exported as `REPOSITORY_URL` so the test asserts the same constant the component renders.
+
+**Rejected**
+- Adding `lucide-react` for the icon: it has no GitHub brand icon any more, and a new dependency needs
+  an ADR for one path.
+
+**Written by hand** — none.
