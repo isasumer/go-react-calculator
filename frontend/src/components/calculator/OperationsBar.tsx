@@ -92,7 +92,7 @@ export function OperationsBar({
       data-ui="calculator.operations"
       role="group"
       aria-label="More operations"
-      className="grid grid-cols-3 gap-2"
+      className="grid grid-cols-3 gap-2 sm:gap-3"
     >
       {extras.map(({ name, symbol }) => {
         const press = pressHandler(name, onUnary, onOperator);

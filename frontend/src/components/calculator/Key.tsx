@@ -19,13 +19,13 @@ export type KeyVariant = "digit" | "operator" | "action" | "equals";
  * the only round key on the pad. That keeps the accent readable for someone who cannot see it.
  */
 const VARIANT_CLASSES: Readonly<Record<KeyVariant, string>> = {
-  digit: "bg-key text-key-foreground font-medium hover:bg-key/70",
+  digit: "bg-key text-key-foreground font-medium tall:text-2xl hover:bg-key/70",
   action:
-    "bg-key-function text-key-function-foreground text-base font-semibold hover:bg-key-function/70",
+    "bg-key-function text-key-function-foreground text-base font-semibold tall:text-lg hover:bg-key-function/70",
   operator:
-    "bg-key-operator text-key-operator-foreground text-2xl font-bold hover:bg-key-operator/85",
+    "bg-key-operator text-key-operator-foreground text-2xl font-bold tall:text-3xl hover:bg-key-operator/85",
   equals:
-    "bg-key-operator text-key-operator-foreground rounded-full text-2xl font-extrabold ring-2 ring-key-operator/40 hover:bg-key-operator/85",
+    "bg-key-operator text-key-operator-foreground rounded-full text-2xl font-extrabold tall:text-3xl ring-2 ring-key-operator/40 hover:bg-key-operator/85",
 };
 
 export interface KeyProps {
@@ -74,9 +74,10 @@ export function Key({
       disabled={disabled}
       onClick={onPress}
       className={cn(
-        // 44 px is the smallest comfortable touch target; the keys grow with the grid above that
-        // and shrink no further, which is what keeps the pad usable in landscape.
+        // 44 px is the smallest comfortable touch target and the floor on a landscape phone. Where
+        // the viewport is tall enough the keys grow to 56 px, and to 64 px beside a desktop display.
         "h-full min-h-11 w-full min-w-11 rounded-xl px-0 text-xl tabular-nums select-none",
+        "tall:min-h-14 sm:tall:min-h-16",
         VARIANT_CLASSES[variant],
         className,
       )}

@@ -65,8 +65,11 @@ function formatExpression(expression: string): string {
 
 /**
  * Font size as a function of length. A `clamp()` would size the text against the *viewport*, which
- * is the wrong variable: the display is a fixed 24 rem column, so what matters is how many
- * characters have to fit in it. Four steps cover 1 to 18 characters (16 digits plus sign and point).
+ * is the wrong variable: the display is a column of at most 32 rem, so what matters is how many
+ * characters have to fit in it. Four steps cover 1 to 18 characters (16 digits plus sign and point);
+ * each still fits a 320 px phone, where the display is about 230 px wide. The 9–11 step grows only
+ * from `lg:`, because a phone on its side is already past `sm:`; there the display shares the card
+ * with the keys, so the two short steps drop back down.
  */
 export function entrySizeClass(value: string): string {
   const { length } = value;
@@ -77,9 +80,9 @@ export function entrySizeClass(value: string): string {
     return "text-2xl";
   }
   if (length > 8) {
-    return "text-3xl";
+    return "text-3xl lg:text-4xl landscape-short:text-2xl";
   }
-  return "text-4xl";
+  return "text-5xl landscape-short:text-2xl";
 }
 
 export function Display({
@@ -100,11 +103,11 @@ export function Display({
     <div
       data-ui="calculator.display"
       data-shake={shake ? "true" : undefined}
-      className="rounded-xl border border-border bg-surface-raised px-4 py-3"
+      className="rounded-xl border border-border bg-surface-raised px-4 py-3 tall:py-5"
     >
       <p
         title={expression}
-        className="min-h-5 truncate text-right font-mono text-sm text-text-muted tabular-nums"
+        className="min-h-6 truncate text-right font-mono text-base text-text-muted tabular-nums"
       >
         {displayExpression}
       </p>

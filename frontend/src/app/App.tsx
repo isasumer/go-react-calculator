@@ -39,17 +39,18 @@ export function App() {
         "[@media(min-height:44rem)]:justify-center"
       }
     >
-      <header className="flex w-full max-w-sm items-baseline justify-between gap-3 px-1">
-        <h1 className="text-lg font-semibold tracking-tight">Calculator</h1>
+      <header className="flex w-full max-w-md items-baseline justify-between gap-3 px-1 sm:max-w-[47rem] lg:max-w-[53rem] landscape-short:max-w-2xl">
+        <h1 className="text-xl font-semibold tracking-tight">Calculator</h1>
         <p className="rounded-full border border-border px-2 py-0.5 font-mono text-xs text-text-muted">
           <span className="sr-only">Version </span>
           {version}
         </p>
       </header>
 
-      {/* `sm:max-w-3xl` gives `HistoryPanel` (F2-05, #16) room to sit beside the calculator card
-          as a side column instead of stacking below it once the viewport is wide enough. */}
-      <main className="w-full max-w-sm sm:max-w-3xl landscape-short:max-w-2xl">
+      {/* From `sm:` `HistoryPanel` (F2-05, #16) sits beside the calculator card as a side column
+          instead of stacking below it. The widths are card + gap + panel (28 + 1 + 18 rem, then
+          32 + 1 + 20 rem), and the header uses the same ones so it lines up with the content. */}
+      <main className="w-full max-w-md sm:max-w-[47rem] lg:max-w-[53rem] landscape-short:max-w-2xl">
         <Calculator />
       </main>
     </div>
