@@ -34,3 +34,5 @@ compose.override.yaml
 # Misc
 *.log
 tmp/
+.vercel
+.env*

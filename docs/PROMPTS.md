@@ -1567,3 +1567,29 @@ and every relative link and anchor in the touched files was resolved by a script
 **Written by hand** — none; this was a verification-and-packaging session, and every deliverable
 (checklist, changelog, email draft, this section) is a direct transcription of command output and repo
 state rather than authored content needing hand-correction beyond wording.
+
+## Session FU-12 — 2026-09-23
+
+**Prompts**
+- "bu app i deploy etmemiz lazım ayrıca backend i de"
+- Answers to clarifying questions: platform = "Vercel (ikisi birden)", process = "Follow-up issue + PR".
+
+**Accepted**
+- Vercel Services with one project: `frontend` (Vite, SPA fallback) and `backend` (`runtime: "container"`
+  from the unchanged `backend/Dockerfile`), with a top-level `/api/(.*)` rewrite. The backend routes already
+  carry the `/api` prefix, so no path stripping is needed, and the app stays same-origin as in ADR-0009.
+- Repeating the nginx security headers in `vercel.json` for non-API paths, because nginx is not in the
+  Vercel path and the Go service already sets its own headers on `/api`.
+- `TRUST_PROXY_HEADERS=true` and `LOG_FORMAT=json` set as Vercel project env vars instead of in the repo.
+  Without the first, the rate limiter would key every client on the edge's address.
+- Keeping the `.vercel` / `.env*` lines that `vercel link` added to `.gitignore`. The OIDC token it writes
+  to `.env.local` must never be committed.
+
+**Rejected**
+- Rewriting the backend as a native Vercel Go function: it would change backend source and lose the
+  middleware chain wiring in `cmd/server`, while the container runtime reuses the shipped image as it is.
+- Cloud Run: the local gcloud account belongs to an unrelated project.
+- Formatting README.md with Prettier: the file was already non-conforming on `main`, and README is not
+  part of the `make check` format gate.
+
+**Written by hand** — none.
