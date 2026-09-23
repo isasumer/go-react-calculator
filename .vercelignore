@@ -1,0 +1,8 @@
+node_modules
+frontend/dist
+frontend/coverage
+backend/bin
+backend/coverage.out
+e2e
+.env
+.env.*

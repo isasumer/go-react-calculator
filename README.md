@@ -5,6 +5,8 @@
 [![stack](https://github.com/isasumer/go-react-calculator/actions/workflows/stack.yml/badge.svg?branch=main)](https://github.com/isasumer/go-react-calculator/actions/workflows/stack.yml)
 [![security](https://github.com/isasumer/go-react-calculator/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/isasumer/go-react-calculator/actions/workflows/security.yml)
 
+**Live demo:** https://go-react-calculator.vercel.app
+
 [Overview](#overview) · [Quick start](#quick-start) · [API](#api) · [Design decisions](#design-decisions) ·
 [Testing](#testing) · [Project structure](#project-structure) · [Configuration](#configuration) ·
 [Time log](#time-log) · [Prompts](#prompts) · [License](#license)
@@ -114,6 +116,22 @@ throttled:
 docker compose -f compose.yaml -f compose.e2e.yaml up --build --wait
 make -C e2e install     # first run only: npm ci + playwright install chromium webkit
 make e2e
+```
+
+### 4. Deploy to Vercel
+
+The same two apps also run as one Vercel project using [Services](https://vercel.com/docs/services)
+(`vercel.json`). The Vite build serves the SPA. The backend is built from `backend/Dockerfile` as a
+container service. A top-level rewrite sends `/api/*` to the Go service, so the browser still sees one
+origin and the ADR-0009 model holds: no CORS, and the operational endpoints (`/metrics`, `/readyz`,
+`/version`) are not public. The security headers in `frontend/nginx/security-headers.conf` are repeated
+in `vercel.json` for every non-API path.
+
+```sh
+vercel link --project go-react-calculator
+vercel env add TRUST_PROXY_HEADERS production   # "true": Vercel's edge sets X-Forwarded-For
+vercel env add LOG_FORMAT production            # "json"
+vercel deploy --prod
 ```
 
 ## API
